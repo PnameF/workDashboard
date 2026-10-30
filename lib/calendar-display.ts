@@ -1,5 +1,6 @@
 import { boardColumns, type BoardLayout } from "./board";
 import { parseDay, parseRange, rangeLabel } from "./timeline";
+import { memberIds } from "./member-columns";
 import {
   statuses,
   type Task,
@@ -36,11 +37,18 @@ export function calendarFieldValue(
     project: task.project,
     hours: task.hours,
   };
-  let value = custom
-    ? task.custom[id]
-    : override
-      ? (task.custom["view:" + id] ?? base[id])
-      : base[id];
+  let value =
+    id === "assignees" && (!override || type === "member")
+      ? base.assignees
+      : custom
+        ? task.custom[id]
+        : override
+          ? (task.custom["view:" + id] ?? base[id])
+          : base[id];
+  if (type === "member" && id !== "assignees")
+    return memberIds(value, people)
+      .map((id) => people[Number(id)])
+      .join(", ");
   if ((id === "images" && !override) || type === "files") {
     const count = attachments.filter(
       (f) => f.task_id === task.id && (f.column_id || "images") === id,

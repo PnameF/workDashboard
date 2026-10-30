@@ -23,6 +23,7 @@ import type { WorkGroup } from "@/lib/types";
 type Props = {
   tasks: Task[];
   allTasks?: Task[];
+  memberAvatars?: Record<string, string | null | undefined>;
   columns: CustomColumn[];
   layout: BoardLayout;
   people: string[];
@@ -38,6 +39,7 @@ type Props = {
 export default function ReportCalendar({
   tasks,
   allTasks = tasks,
+  memberAvatars,
   columns,
   layout,
   people,
@@ -292,6 +294,7 @@ export default function ReportCalendar({
       )}
       {detail && taskMap.has(detail.taskId) && (
         <TaskDetailsDrawer
+          memberAvatars={memberAvatars}
           groups={groups}
           key={detail.taskId}
           task={taskMap.get(detail.taskId)!}

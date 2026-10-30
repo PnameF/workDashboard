@@ -24,6 +24,8 @@ import MultiChoice from "./choice-picker";
 import DatePicker from "./date-picker";
 import TimelinePicker from "./timeline-picker";
 import TextSuggest from "./text-suggest";
+import type { Workspace } from "@/lib/types";
+import { memberIds } from "@/lib/member-columns";
 export default function TaskEditor({
   task,
   columns,
@@ -41,6 +43,7 @@ export default function TaskEditor({
   parentTask,
   subtasks = [],
   onOpenTask,
+  memberDirectory,
 }: {
   task: Task;
   columns: CustomColumn[];
@@ -62,6 +65,7 @@ export default function TaskEditor({
   parentTask?: Task;
   subtasks?: Task[];
   onOpenTask?: (task: Task) => void;
+  memberDirectory?: Workspace["members"];
 }) {
   const [draft, setDraft] = useState(task),
     [confirmDelete, setConfirmDelete] = useState(false),
@@ -69,7 +73,11 @@ export default function TaskEditor({
     tabsId = useId(),
     [error, setError] = useState(""),
     fields = editorFields(columns, layout),
-    members = people.flatMap((name, id) => (name ? [{ name, id }] : []));
+    members =
+      memberDirectory ||
+      people.flatMap((name, id) =>
+        name ? [{ name, id, avatarUrl: null }] : [],
+      );
   if (!task.id && !fields.some((f) => f.id === "name" && !f.key))
     fields.unshift({
       id: "name",
@@ -82,19 +90,24 @@ export default function TaskEditor({
   function input(field: EditorField) {
     const value = editorValue(draft, field, people),
       label = field.name;
-    if (field.type === "people")
+    if (field.type === "people" || field.type === "member")
       return (
         <MultiChoice
           label={label}
           options={members.map((m) => m.name)}
           optionValues={members.map((m) => String(m.id))}
-          selected={draft.assignees.filter((id) => people[id]).map(String)}
+          selected={memberIds(value, people)}
+          avatarUrls={Object.fromEntries(
+            members.map((m) => [String(m.id), m.avatarUrl]),
+          )}
           disabled={busy}
           avatars
           onChange={(values) =>
             change(field, [
               ...values,
-              ...draft.assignees.filter((id) => !people[id]).map(String),
+              ...(!field.key && field.id === "assignees"
+                ? draft.assignees.filter((id) => !people[id]).map(String)
+                : []),
             ])
           }
         />
@@ -330,7 +343,9 @@ export default function TaskEditor({
                   data-editor-field={field.id}
                 >
                   <div className="task-editor-label">
-                    {field.type === "people" && <FiUsers />}
+                    {(field.type === "people" || field.type === "member") && (
+                      <FiUsers />
+                    )}
                     {field.name}
                     {field.id === "name" && !field.key && <span>*</span>}
                   </div>

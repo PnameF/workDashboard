@@ -66,7 +66,8 @@ export function quickOptions(
     options = entries.map((entry) =>
       option(
         entry.value,
-        field.type === "people" && entry.value === String(currentUser)
+        (field.type === "people" || field.type === "member") &&
+          entry.value === String(currentUser)
           ? `ฉัน (${entry.label})`
           : entry.label,
         "eq",

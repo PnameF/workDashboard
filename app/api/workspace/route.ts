@@ -40,9 +40,9 @@ export async function GET() {
           .all<WorkGroup>(),
         db
           .prepare(
-            "SELECT m.id,m.name FROM members m LEFT JOIN auth_users u ON u.id=m.user_id WHERE u.role IS NULL OR u.role<>'admin' ORDER BY m.id",
+            "SELECT m.id,m.name,u.avatar_url AS avatarUrl FROM members m JOIN auth_users u ON u.id=m.user_id WHERE u.role<>'admin' ORDER BY m.id",
           )
-          .all<{ id: number; name: string }>(),
+          .all<{ id: number; name: string; avatarUrl: string | null }>(),
       ]);
     const savedLayout: BoardLayout = settings
       ? JSON.parse(settings.layout)

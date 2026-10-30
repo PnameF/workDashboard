@@ -61,7 +61,6 @@ import {
   FiShield,
 } from "react-icons/fi";
 import {
-  people as demoPeople,
   statuses,
   type Task,
   type Workspace,
@@ -73,6 +72,7 @@ import {
 } from "@/lib/types";
 import { nameInitials, type AuthUser } from "@/lib/auth-types";
 import { memberColor } from "@/lib/member-color";
+import { memberIds } from "@/lib/member-columns";
 import { isSubtaskExpanded, subtaskRows } from "@/lib/subtasks";
 import { todayKey, parseDay, monthNames } from "@/lib/timeline";
 import {
@@ -208,7 +208,7 @@ export default function Dashboard({
     >(null),
     [imageTask, setImageTask] = useState<Task | null>(null);
   const currentUser = user.memberId,
-    members = data.members || demoPeople.map((name, id) => ({ id, name })),
+    members = data.members || [],
     memberEntries = members.map((m) => [m.name, m.id] as const),
     people = members.reduce((names, m) => {
       names[m.id] = m.name;
@@ -222,6 +222,11 @@ export default function Dashboard({
     });
   }
   const dialog = useRef<HTMLDialogElement>(null);
+  const dialogPointerStart = useRef<{
+    x: number;
+    y: number;
+    outside: boolean;
+  } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizing = useRef<{
     id: string;
@@ -381,11 +386,14 @@ export default function Dashboard({
     };
     return draftWidths[id] ?? layout.widths?.[id] ?? defaults[id] ?? 180;
   }
-  async function saveLayout(next: BoardLayout, onSaved?: () => void) {
+  async function saveLayout(
+    next: BoardLayout,
+    onSaved?: () => void | Promise<void>,
+  ) {
     await mutate(async () => {
       const saved = await api<BoardLayout>("/api/table-layout", "PUT", next);
       setData((d) => ({ ...d, layout: saved }));
-      onSaved?.();
+      await onSaved?.();
     });
   }
   function clearBoardDrag() {
@@ -447,13 +455,15 @@ export default function Dashboard({
     return (
       layout.overrides[id]?.type ||
       data.columns.find((c) => c.id === id)?.type ||
-      (id === "status"
-        ? "status"
-        : id === "hours"
-          ? "number"
-          : id === "images"
-            ? "files"
-            : "text")
+      (id === "assignees"
+        ? "member"
+        : id === "status"
+          ? "status"
+          : id === "hours"
+            ? "number"
+            : id === "images"
+              ? "files"
+              : "text")
     );
   }
   function editOption(
@@ -549,11 +559,15 @@ export default function Dashboard({
     if (columnTypeFor(id) === "files") return renderFilesCell(t, id);
     const override = layout.overrides[id];
     const custom = data.columns.find((c) => c.id === id);
-    if (override || custom) {
+    if (
+      (override || custom) &&
+      !(id === "assignees" && !custom && override?.type === "member")
+    ) {
       const c = override || custom!;
       if (custom)
         return (
           <CustomCell
+            members={members}
             column={c}
             colors={layout.optionColors?.[id]}
             editOption={(value) => editOption(id, value)}
@@ -591,6 +605,7 @@ export default function Dashboard({
       return (
         <div>
           <CustomCell
+            members={members}
             colors={layout.optionColors?.[id]}
             editOption={(value) => editOption(id, value)}
             editOptions={() => {
@@ -622,7 +637,10 @@ export default function Dashboard({
       case "assignees":
         return (
           <MultiChoice
-            label={`ผู้รับผิดชอบ ${t.name}`}
+            avatarUrls={Object.fromEntries(
+              members.map((m) => [String(m.id), m.avatarUrl]),
+            )}
+            label={`${layout.overrides.assignees?.name || "ผู้รับผิดชอบ"} ${t.name}`}
             options={members.map((m) => m.name)}
             selected={t.assignees.filter((id) => !!people[id]).map(String)}
             optionValues={members.map((m) => String(m.id))}
@@ -1517,6 +1535,9 @@ export default function Dashboard({
                     </div>
                   </div>
                   <ReportCalendar
+                    memberAvatars={Object.fromEntries(
+                      members.map((m) => [String(m.id), m.avatarUrl]),
+                    )}
                     allTasks={data.tasks}
                     groups={data.groups || []}
                     tasks={list}
@@ -2643,10 +2664,45 @@ export default function Dashboard({
       )}
       <dialog
         ref={dialog}
-        className={modal === "task" ? "task-edit-dialog" : undefined}
+        className={
+          modal === "task"
+            ? "task-edit-dialog"
+            : modal === "column" || modal === "columnedit"
+              ? "column-dialog"
+              : undefined
+        }
         onCancel={() => setModal(null)}
+        onPointerDownCapture={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          dialogPointerStart.current = {
+            x: e.clientX,
+            y: e.clientY,
+            outside:
+              e.target === e.currentTarget &&
+              (e.clientX < rect.left ||
+                e.clientX > rect.right ||
+                e.clientY < rect.top ||
+                e.clientY > rect.bottom),
+          };
+        }}
+        onPointerCancel={() => {
+          dialogPointerStart.current = null;
+        }}
         onClick={(e) => {
-          if (e.target === dialog.current) setModal(null);
+          const start = dialogPointerStart.current;
+          dialogPointerStart.current = null;
+          if (e.target !== e.currentTarget || !start?.outside) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const outside =
+            e.clientX < rect.left ||
+            e.clientX > rect.right ||
+            e.clientY < rect.top ||
+            e.clientY > rect.bottom;
+          if (
+            outside &&
+            Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6
+          )
+            setModal(null);
         }}
       >
         {modal === "group-action" && groupAction && (
@@ -2865,6 +2921,7 @@ export default function Dashboard({
         )}
         {modal === "task" && (
           <TaskEditor
+            memberDirectory={members}
             parentTask={data.tasks.find(
               (t) => t.id === (editing?.parent_id || newTaskParent),
             )}
@@ -2961,7 +3018,8 @@ export default function Dashboard({
                       },
                     },
                   },
-                  () => {
+                  async () => {
+                    setData(await api<Workspace>("/api/workspace"));
                     setModal(null);
                     toast("บันทึกคอลัมน์แล้ว");
                   },
@@ -3008,6 +3066,7 @@ export default function Dashboard({
             >
               {[
                 ["text", "Aa — Text / ข้อความ"],
+                ["member", "Member / สมาชิก"],
                 ["number", "123 — Number / ตัวเลข"],
                 ["status", "Status / สถานะ"],
                 ["date", "Date / วันที่"],
@@ -3339,6 +3398,7 @@ function CustomCell({
   numberConfig,
   colors,
   editOption,
+  members = [],
 }: {
   column: CustomColumn;
   task: Task;
@@ -3348,10 +3408,28 @@ function CustomCell({
   numberConfig?: NumberSummaryConfig;
   colors?: Record<string, string>;
   editOption?: (value: string) => void;
+  members?: NonNullable<Workspace["members"]>;
 }) {
   const val = t.custom[c.id] ?? "";
   const set = (value: string | boolean | string[]) =>
     update({ ...t, custom: { ...t.custom, [c.id]: value } });
+  if (c.type === "member")
+    return (
+      <MultiChoice
+        label={c.name}
+        options={members.map((m) => m.name)}
+        optionValues={members.map((m) => String(m.id))}
+        selected={memberIds(val).filter((id) =>
+          members.some((m) => String(m.id) === id),
+        )}
+        avatarUrls={Object.fromEntries(
+          members.map((m) => [String(m.id), m.avatarUrl]),
+        )}
+        avatars
+        disabled={busy}
+        onChange={set}
+      />
+    );
   if (c.type === "number")
     return (
       <NumberCell

@@ -2,6 +2,7 @@ export const people = ["ธนกร", "พิมพ์ชนก", "ณัฐว
 export const initials = ["ธก", "พช", "ณว", "ศพ"];
 export const statuses = ["ยังไม่เริ่ม", "กำลังทำ", "เสร็จแล้ว", "ติดปัญหา"];
 export type ColumnType =
+  | "member"
   | "text"
   | "number"
   | "status"
@@ -55,7 +56,7 @@ export type ArchivedTask = {
   file_count: number;
 };
 export type Workspace = {
-  members?: { id: number; name: string }[];
+  members?: { id: number; name: string; avatarUrl?: string | null }[];
   people?: string[];
   groups?: WorkGroup[];
   layout?: import("./board").BoardLayout;

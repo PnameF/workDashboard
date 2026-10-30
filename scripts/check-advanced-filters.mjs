@@ -211,6 +211,46 @@ assert.equal(
   )[0].value,
   "0",
 );
+const memberContext = {
+  ...context,
+  columns: [
+    ...context.columns,
+    { id: "reviewers", name: "Reviewers", type: "member" },
+  ],
+};
+const memberTask = {
+  ...tasks[0],
+  custom: { ...tasks[0].custom, reviewers: ["1", "9"] },
+};
+const memberField = f
+  .filterFields([memberTask], memberContext)
+  .find((field) => field.id === "reviewers");
+assert.deepEqual(
+  memberField.options.map((option) => option.value),
+  ["0", "1"],
+);
+assert.deepEqual(f.filterRaw(memberTask, memberField, memberContext), ["1"]);
+assert.ok(
+  f.matchesRule(
+    memberTask,
+    rule("reviewers", "eq", "1"),
+    memberField,
+    memberContext,
+  ),
+);
+assert.ok(
+  !f.matchesRule(
+    memberTask,
+    rule("reviewers", "eq", "9"),
+    memberField,
+    memberContext,
+  ),
+);
+assert.ok(
+  q
+    .quickOptions(memberField, [memberTask], memberContext, "2026-10-30", 1)
+    .some((option) => option.label === "ฉัน (Member B)"),
+);
 console.log(
   "PASS: AND/OR groups, zero/false values, numeric/date boundaries, Timeline overlap, file names, multi-select, hidden admin, validation, and column overrides.",
 );

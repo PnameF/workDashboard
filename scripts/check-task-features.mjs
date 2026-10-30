@@ -805,6 +805,142 @@ try {
     ).count,
     0,
   );
+  // Member columns store stable registered-member IDs, not editable display names.
+  await db
+    .prepare(
+      "UPDATE members SET user_id='unit-member',name='Unit Member' WHERE id=0",
+    )
+    .run();
+  await db
+    .prepare(
+      "UPDATE auth_users SET avatar_url='https://assets.example.test/avatar.png' WHERE id='unit-member'",
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO auth_users(id,email,name,password_hash,role,created_at) VALUES('unit-second','second@example.test','Unit Member','unit','member',0),('unit-admin','admin@example.test','Hidden admin','unit','admin',0)",
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO members(id,name,user_id) VALUES(4,'Unit Member','unit-second'),(5,'Hidden admin','unit-admin')",
+    )
+    .run();
+  response = await columns.POST(
+    req("/api/columns", "POST", { name: "Reviewers", type: "member" }),
+  );
+  assert.equal(response.status, 201);
+  const memberColumn = await response.json();
+  const memberBody = {
+    name: "Member task",
+    custom: { [memberColumn.id]: ["0", "4"] },
+  };
+  response = await taskApi.POST(req("/api/tasks", "POST", memberBody));
+  assert.equal(response.status, 201, await response.clone().text());
+  const memberTask = await response.json();
+  for (const bad of [["1"], ["5"], ["9999"], ["0", "0"], ["Unit Member"]]) {
+    assert.equal(
+      (
+        await taskApi.POST(
+          req("/api/tasks", "POST", {
+            ...memberBody,
+            custom: { [memberColumn.id]: bad },
+          }),
+        )
+      ).status,
+      400,
+    );
+  }
+  const directory = await (await workspaceApi.GET()).json();
+  assert.deepEqual(
+    directory.members.map((m) => m.id),
+    [0, 4],
+  );
+  assert.equal(
+    directory.members[0].avatarUrl,
+    "https://assets.example.test/avatar.png",
+  );
+  assert.equal(
+    directory.members.filter((m) => m.name === "Unit Member").length,
+    2,
+  );
+  response = await columns.POST(
+    req("/api/columns", "POST", { name: "Legacy owner", type: "text" }),
+  );
+  const legacyMember = await response.json();
+  await db
+    .prepare("UPDATE tasks SET custom=json_set(custom,?,?) WHERE id=?")
+    .bind("$." + JSON.stringify(legacyMember.id), "Unit Member", memberTask.id)
+    .run();
+  const archivedMember = await createTask("Archived member conversion");
+  await db
+    .prepare(
+      "UPDATE tasks SET archived_at=CURRENT_TIMESTAMP,custom=json_set(custom,?,?) WHERE id=?",
+    )
+    .bind(
+      "$." + JSON.stringify(legacyMember.id),
+      "Unit Member",
+      archivedMember.id,
+    )
+    .run();
+  let memberLayout = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  memberLayout.overrides.assignees = {
+    id: "assignees",
+    name: "ผู้รับผิดชอบ",
+    type: "text",
+  };
+  assert.equal(
+    (await layoutApi.PUT(req("/api/table-layout", "PUT", memberLayout))).status,
+    200,
+  );
+  memberLayout.overrides[legacyMember.id] = {
+    id: legacyMember.id,
+    name: "Legacy owner",
+    type: "member",
+  };
+  memberLayout.overrides.assignees.type = "member";
+  response = await layoutApi.PUT(req("/api/table-layout", "PUT", memberLayout));
+  assert.equal(response.status, 200, await response.clone().text());
+  for (const id of [memberTask.id, archivedMember.id]) {
+    const savedMemberData = JSON.parse(
+      (await db.prepare("SELECT custom FROM tasks WHERE id=?").bind(id).first())
+        .custom,
+    );
+    assert.deepEqual(savedMemberData[legacyMember.id], ["0", "4"]);
+  }
+  const memberFields = editor.editorFields(
+    [memberColumn, legacyMember],
+    memberLayout,
+  );
+  assert.equal(memberFields.find((f) => f.id === "assignees").type, "member");
+  assert.equal(memberFields.find((f) => f.id === "assignees").key, undefined);
+  const customMemberField = memberFields.find((f) => f.id === memberColumn.id);
+  assert.deepEqual(
+    editor.setEditorValue(memberTask, customMemberField, ["4"]).custom[
+      memberColumn.id
+    ],
+    ["4"],
+  );
+  await db.prepare("UPDATE members SET name='Renamed member' WHERE id=4").run();
+  const memberCalendar = await module("lib/calendar-display.ts");
+  assert.equal(
+    memberCalendar.calendarFieldValue(
+      memberTask,
+      memberColumn.id,
+      [memberColumn],
+      memberLayout,
+      ["Unit Member", "", "", "", "Renamed member"],
+      [],
+    ),
+    "Unit Member, Renamed member",
+  );
+  assert.deepEqual(memberTask.custom[memberColumn.id], ["0", "4"]);
+  console.log(
+    "PASS: registered-only Member columns, stable IDs with duplicate/renamed names, avatars, native assignees, and legacy conversion including archived tasks.",
+  );
   console.log(
     "PASS: subtask create/validation, independent status, sibling moves, parent archive/restore/duplicate, filtered hierarchy, and cascading file/update cleanup.",
   );

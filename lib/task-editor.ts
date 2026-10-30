@@ -14,7 +14,7 @@ export type EditorField = {
 };
 const types: Record<string, EditorField["type"]> = {
   name: "text",
-  assignees: "people",
+  assignees: "member",
   status: "status",
   date: "date",
   priority: "select",
@@ -40,7 +40,13 @@ export function editorFields(
           id,
           name: override?.name || c.name,
           type: override?.type || custom?.type || types[id] || "text",
-          key: custom ? id : override ? "view:" + id : undefined,
+          key: custom
+            ? id
+            : id === "assignees" && (!override || override.type === "member")
+              ? undefined
+              : override
+                ? "view:" + id
+                : undefined,
           options: override?.options || custom?.options,
         },
       ];
@@ -57,7 +63,7 @@ export function editorValue(
     case "name":
       return task.name;
     case "assignees":
-      return field.type === "people"
+      return field.type === "people" || field.type === "member"
         ? task.assignees.map(String)
         : task.assignees.map((id) => people[id]).filter(Boolean);
     case "status":

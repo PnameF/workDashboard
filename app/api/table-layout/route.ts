@@ -4,6 +4,7 @@ import { baseColumns, columnTypes, type BoardLayout } from "@/lib/board";
 import { calculations } from "@/lib/column-summary";
 import { validOptionColors } from "@/lib/option-colors";
 import { referencedColumns, removeColumnReferences } from "@/lib/column-layout";
+import { convertMemberColumn } from "@/lib/member-columns";
 export async function PUT(request: Request) {
   const authError = await checkAccess(request);
   if (authError) return authError;
@@ -18,8 +19,8 @@ export async function PUT(request: Request) {
         : [];
     body.deletedColumns = deleted;
     const custom = await db
-      .prepare("SELECT id FROM custom_columns")
-      .all<{ id: string }>();
+      .prepare("SELECT id,type FROM custom_columns")
+      .all<{ id: string; type: string }>();
     const ids = new Set([
       ...baseColumns.filter((c) => !deleted.includes(c.id)).map((c) => c.id),
       ...custom.results.map((c) => c.id),
@@ -142,12 +143,29 @@ export async function PUT(request: Request) {
         { error: "การตั้งค่าคอลัมน์ไม่ถูกต้อง" },
         { status: 400 },
       );
-    await db
-      .prepare(
-        "INSERT INTO board_settings(id,layout) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET layout=excluded.layout",
+    const conversions = Object.entries(body.overrides)
+      .filter(
+        ([id, definition]) =>
+          definition.type === "member" &&
+          (savedLayout?.overrides[id]?.type ||
+            custom.results.find((c) => c.id === id)?.type ||
+            (id === "assignees" ? "member" : "text")) !== "member",
       )
-      .bind(JSON.stringify(body))
-      .run();
+      .map(([id]) =>
+        convertMemberColumn(
+          db,
+          id,
+          custom.results.some((c) => c.id === id),
+        ),
+      );
+    await db.batch([
+      ...conversions,
+      db
+        .prepare(
+          "INSERT INTO board_settings(id,layout) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET layout=excluded.layout",
+        )
+        .bind(JSON.stringify(body)),
+    ]);
     return Response.json(body);
   } catch (error) {
     console.error("Board layout failed", error);

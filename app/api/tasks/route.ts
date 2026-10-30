@@ -5,6 +5,7 @@ import { getDb, getBucket } from "@/lib/db";
 import type { Task } from "@/lib/types";
 import { validTimelines } from "@/lib/timeline-validation";
 import { taskTreeSql } from "@/lib/subtasks";
+import { validMemberColumns } from "@/lib/member-columns";
 async function enforceDeleted(db: Database, t: Task) {
   const settings = await db
     .prepare("SELECT layout FROM board_settings WHERE id=1")
@@ -80,6 +81,11 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const db = await getDb();
     await enforceDeleted(db, t);
+    if (!(await validMemberColumns(db, t)))
+      return Response.json(
+        { error: "กรุณาเลือกสมาชิกจากบัญชีที่สมัครจริง ไม่เกิน 50 คนต่อช่อง" },
+        { status: 400 },
+      );
     if (!(await validTimelines(db, t.custom)))
       return Response.json(
         { error: "Timeline ต้องเป็นช่วงวันที่เริ่มต้น–สิ้นสุดที่ถูกต้อง" },
@@ -173,6 +179,11 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
     const db = await getDb();
     await enforceDeleted(db, t);
+    if (!(await validMemberColumns(db, t)))
+      return Response.json(
+        { error: "กรุณาเลือกสมาชิกจากบัญชีที่สมัครจริง ไม่เกิน 50 คนต่อช่อง" },
+        { status: 400 },
+      );
     if (!(await validTimelines(db, t.custom)))
       return Response.json(
         { error: "Timeline ต้องเป็นช่วงวันที่เริ่มต้น–สิ้นสุดที่ถูกต้อง" },

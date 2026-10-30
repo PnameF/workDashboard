@@ -30,13 +30,18 @@ await read(
   "SELECT c.id,c.body,c.created_at,c.updated_at,u.name,u.role,u.avatar_url,f.url,t.archived_group_id FROM task_updates c LEFT JOIN auth_users u ON u.id=c.author_id LEFT JOIN task_update_files f ON f.update_id=c.id JOIN tasks t ON t.id=c.task_id WHERE 0",
 );
 await read("SELECT parent_id,archived_parent_id FROM tasks WHERE 0");
-assert.ok(schema.migrations >= 21);
+assert.ok(schema.migrations >= 22);
+const [memberSchema] = await read(
+  "SELECT sql FROM sqlite_master WHERE type='table' AND name='custom_columns'",
+);
+assert.ok(memberSchema.sql.includes("'member'"));
 console.log(
   JSON.stringify({
     migrations: schema.migrations,
     update_tables: schema.update_tables,
     update_queries_valid: true,
     subtask_columns_valid: true,
+    member_type_valid: true,
     mode: "read-only",
   }),
 );

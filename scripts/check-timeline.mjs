@@ -14,6 +14,7 @@ for (const file of [
   "lib/calendar-display.ts",
   "lib/timeline-events.ts",
   "lib/member-color.ts",
+  "lib/member-columns.ts",
   "lib/auth-types.ts",
   "lib/option-colors.ts",
   "lib/update-images.ts",
@@ -30,6 +31,8 @@ for (const file of [
   "components/image-viewer.tsx",
   "components/timeline-picker.tsx",
   "components/subtask-table.tsx",
+  "components/member-avatar.tsx",
+  "components/choice-picker.tsx",
 ]) {
   let source = ts.transpileModule(fs.readFileSync(file, "utf8"), {
     compilerOptions: {
@@ -39,6 +42,7 @@ for (const file of [
     },
   }).outputText;
   source = source
+    .replace('import Image from "next/image"', 'import NextImageModule from "next/image.js"; const Image = NextImageModule.default || NextImageModule')
     .replace('from "next/image"', 'from "next/image.js"')
     .replace(
       /from (["'])@\/lib\/([^"']+)\1/g,
@@ -84,6 +88,26 @@ assert.ok(subtaskMarkup.includes('scope="col">งานย่อย</th>'));
 assert.ok(subtaskMarkup.includes('scope="col">สถานะใหม่</th>'));
 assert.ok(subtaskMarkup.includes("เพิ่มงานย่อยใน งานแม่"));
 assert.ok(subtaskMarkup.includes("งานลูก"));
+const { default: MemberChoice } = await import(
+  pathToFileURL(path.join(root, "components/choice-picker.mjs"))
+);
+const memberMarkup = renderToStaticMarkup(
+  React.createElement(MemberChoice, {
+    label: "สมาชิก",
+    options: ["Member A", "Member B"],
+    optionValues: ["0", "4"],
+    selected: ["0", "4"],
+    disabled: false,
+    avatars: true,
+    avatarUrls: { 0: "https://assets.example.test/avatar.png" },
+    onChange() {},
+  }),
+);
+assert.ok(memberMarkup.includes("Member A"));
+assert.ok(memberMarkup.includes("Member B"));
+assert.ok(
+  memberMarkup.includes('src="https://assets.example.test/avatar.png"'),
+);
 assert.deepEqual(t.parseRange(["2026-10-30", "2026-11-03"]), [
   "2026-10-30",
   "2026-11-03",

@@ -372,6 +372,7 @@ export default function AdvancedFilters({
                           ) : field &&
                             [
                               "people",
+                              "member",
                               "status",
                               "select",
                               "multiselect",

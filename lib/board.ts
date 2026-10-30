@@ -1,5 +1,6 @@
 import type { ColumnType, CustomColumn, Task, WorkGroup } from "./types";
 export const columnTypes: Record<ColumnType, string> = {
+  member: "สมาชิก",
   text: "ข้อความ",
   number: "ตัวเลข",
   status: "สถานะ",

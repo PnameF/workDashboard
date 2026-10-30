@@ -24,6 +24,7 @@ export async function POST(request: Request) {
         "select",
         "files",
         "timeline",
+        "member",
       ].includes(type)
     )
       return Response.json(

@@ -6,6 +6,7 @@ import {
   type Attachment,
 } from "./types";
 import { parseDay, parseRange } from "./timeline";
+import { memberIds } from "./member-columns";
 export type FilterRule = {
   id: string;
   column: string;
@@ -50,7 +51,7 @@ export function matchesTaskFilters(
 }
 const defaults: Record<string, string> = {
   name: "text",
-  assignees: "people",
+  assignees: "member",
   status: "status",
   date: "date",
   priority: "select",
@@ -78,10 +79,17 @@ export function filterRaw(
     project: task.project,
     hours: task.hours,
   };
-  const value = context.columns.some((c) => c.id === field.id)
-    ? task.custom[field.id]
-    : (task.custom["view:" + field.id] ?? base[field.id]);
-  return field.type === "timeline" ? parseRange(value) || [] : value;
+  const value =
+    field.id === "assignees" && field.type === "member"
+      ? base.assignees
+      : context.columns.some((c) => c.id === field.id)
+        ? task.custom[field.id]
+        : (task.custom["view:" + field.id] ?? base[field.id]);
+  return field.type === "timeline"
+    ? parseRange(value) || []
+    : field.type === "member"
+      ? memberIds(value, context.people)
+      : value;
 }
 export function filterFields(
   tasks: Task[],
@@ -101,7 +109,7 @@ export function filterFields(
         type,
         options: [],
       };
-    if (type === "people")
+    if (type === "people" || type === "member")
       field.options = context.people.flatMap((name, id) =>
         name ? [{ value: String(id), label: name }] : [],
       );
@@ -171,7 +179,16 @@ export function filterOperators(type: string) {
       { value: "gt", label: "เริ่มหลังวันที่" },
       ...blank,
     ];
-  if (["people", "status", "select", "multiselect", "checkbox"].includes(type))
+  if (
+    [
+      "people",
+      "member",
+      "status",
+      "select",
+      "multiselect",
+      "checkbox",
+    ].includes(type)
+  )
     return [...equal, ...blank];
   return [
     { value: "contains", label: "มีข้อความ" },

@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { FiCheck, FiChevronDown, FiSearch, FiX, FiEdit2 } from "react-icons/fi";
 import { optionColor } from "@/lib/option-colors";
-import { nameInitials } from "@/lib/auth-types";
+import MemberAvatar from "./member-avatar";
 type Props = {
   label: string;
   options: string[];
@@ -16,6 +16,7 @@ type Props = {
   onEditOptions?: () => void;
   onEditOption?: (value: string) => void;
   colors?: Record<string, string>;
+  avatarUrls?: Record<string, string | null | undefined>;
 };
 export default function MultiChoice({
   label,
@@ -30,6 +31,7 @@ export default function MultiChoice({
   onEditOptions,
   onEditOption,
   colors,
+  avatarUrls,
 }: Props) {
   const id = useId(),
     popup = useRef<HTMLDivElement>(null),
@@ -38,7 +40,6 @@ export default function MultiChoice({
     [search, setSearch] = useState(""),
     [position, setPosition] = useState({ left: 0, top: 0 });
   const values = optionValues || options;
-  const initials = options.map(nameInitials);
   const selected = selectedValues.filter((value) => value.trim() !== "");
   const matches = options
     .map((text, index) => ({ text, index, value: values[index] }))
@@ -83,9 +84,7 @@ export default function MultiChoice({
         style={{ background: optionColor(colors, value) }}
       >
         {avatars && (
-          <span className={`avatar p${i}`}>
-            {initials[i] || name.slice(0, 2)}
-          </span>
+          <MemberAvatar id={value} name={name} url={avatarUrls?.[value]} />
         )}
         <span>{name}</span>
         {removable && (
@@ -124,18 +123,7 @@ export default function MultiChoice({
       >
         <span className="multi-tags">
           {selected.length ? (
-            avatars ? (
-              selected.map((v) => {
-                const i = values.indexOf(v);
-                return (
-                  <span key={v} className={`avatar p${i}`} title={options[i]}>
-                    {initials[i]}
-                  </span>
-                );
-              })
-            ) : (
-              selected.map((v) => chip(v))
-            )
+            selected.map((v) => chip(v))
           ) : (
             <span className="choice-placeholder">＋</span>
           )}
@@ -167,9 +155,7 @@ export default function MultiChoice({
               ref={input}
               type="text"
               aria-label={`ค้นหา ${label}`}
-              placeholder={
-                avatars ? "ค้นหาชื่อผู้รับผิดชอบ..." : "ค้นหาตัวเลือก..."
-              }
+              placeholder={avatars ? "ค้นหาสมาชิก..." : "ค้นหาตัวเลือก..."}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
@@ -200,7 +186,7 @@ export default function MultiChoice({
           </div>
         </div>
         <div className="choice-suggested">
-          {avatars ? "ผู้รับผิดชอบที่แนะนำ" : "เลือกจากรายการ"}
+          {avatars ? "สมาชิกในทีม" : "เลือกจากรายการ"}
         </div>
         <div
           className="choice-list"
@@ -220,9 +206,11 @@ export default function MultiChoice({
               >
                 {avatars ? (
                   <>
-                    <span className={`avatar p${index}`}>
-                      {initials[index]}
-                    </span>
+                    <MemberAvatar
+                      id={value}
+                      name={text}
+                      url={avatarUrls?.[value]}
+                    />
                     <span>{text}</span>
                   </>
                 ) : (

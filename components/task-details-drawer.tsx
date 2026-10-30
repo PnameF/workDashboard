@@ -27,10 +27,11 @@ import { optionColor } from "@/lib/option-colors";
 import { taskGroupInfo } from "@/lib/board";
 import type { WorkGroup } from "@/lib/types";
 import { statuses } from "@/lib/types";
-import { memberColor } from "@/lib/member-color";
-import { nameInitials } from "@/lib/auth-types";
+import MemberAvatar from "./member-avatar";
+import { memberIds } from "@/lib/member-columns";
 import { parseRange, rangeDuration } from "@/lib/timeline";
 const icons: Record<string, IconType> = {
+  member: FiUsers,
   text: FiType,
   people: FiUsers,
   status: FiFlag,
@@ -46,7 +47,7 @@ const icons: Record<string, IconType> = {
 };
 const baseTypes: Record<string, string> = {
   name: "text",
-  assignees: "people",
+  assignees: "member",
   status: "status",
   date: "date",
   priority: "select",
@@ -69,6 +70,7 @@ function tone(value: string) {
   );
 }
 type Props = {
+  memberAvatars?: Record<string, string | null | undefined>;
   task: Task;
   parentTask?: Task;
   columns: CustomColumn[];
@@ -79,6 +81,7 @@ type Props = {
   groups?: WorkGroup[];
 };
 export default function TaskDetailsDrawer({
+  memberAvatars,
   task,
   parentTask,
   columns,
@@ -212,6 +215,11 @@ export default function TaskDetailsDrawer({
                   raw = columns.some((c) => c.id === field.id)
                     ? task.custom[field.id]
                     : task.custom["view:" + field.id],
+                  assignedMembers =
+                    field.id === "assignees" &&
+                    (type === "member" || type === "people")
+                      ? task.assignees.filter((id) => people[id]).map(String)
+                      : memberIds(raw, people),
                   range = type === "timeline" ? parseRange(raw) : null,
                   tags = Array.isArray(raw)
                     ? raw.filter(
@@ -234,19 +242,19 @@ export default function TaskDetailsDrawer({
                       <span>{field.name}</span>
                     </dt>
                     <dd>
-                      {type === "people" &&
-                      task.assignees.some((id) => people[id]) ? (
+                      {(type === "people" || type === "member") &&
+                      assignedMembers.length > 0 ? (
                         <div className="drawer-value-tags">
-                          {task.assignees
-                            .filter((id) => people[id])
-                            .map((id) => (
-                              <span className="drawer-person" key={id}>
-                                <i style={{ background: memberColor(id) }}>
-                                  {nameInitials(people[id])}
-                                </i>
-                                <span>{people[id]}</span>
-                              </span>
-                            ))}
+                          {assignedMembers.map(Number).map((id) => (
+                            <span className="drawer-person" key={id}>
+                              <MemberAvatar
+                                id={id}
+                                name={people[id]}
+                                url={memberAvatars?.[String(id)]}
+                              />
+                              <span>{people[id]}</span>
+                            </span>
+                          ))}
                         </div>
                       ) : type === "status" && value ? (
                         <span
