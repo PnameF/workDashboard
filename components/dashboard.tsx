@@ -377,10 +377,11 @@ export default function Dashboard({
     };
     return draftWidths[id] ?? layout.widths?.[id] ?? defaults[id] ?? 180;
   }
-  async function saveLayout(next: BoardLayout) {
+  async function saveLayout(next: BoardLayout, onSaved?: () => void) {
     await mutate(async () => {
       const saved = await api<BoardLayout>("/api/table-layout", "PUT", next);
       setData((d) => ({ ...d, layout: saved }));
+      onSaved?.();
     });
   }
   function clearBoardDrag() {
@@ -927,8 +928,15 @@ export default function Dashboard({
               background: "var(--surface-raised)",
             }}
           >
-            <b style={{ fontSize: 12 }}>พื้นที่ดี ๆ สำหรับทุกงาน ✧</b>
-            <p style={{ fontSize: 11, marginTop: 7 }}>
+            <b style={{ fontSize: "calc(12px * var(--ui-font-scale, 1))" }}>
+              พื้นที่ดี ๆ สำหรับทุกงาน ✧
+            </b>
+            <p
+              style={{
+                fontSize: "calc(11px * var(--ui-font-scale, 1))",
+                marginTop: 7,
+              }}
+            >
               ให้ทีมโฟกัสกับสิ่งที่สำคัญ
             </p>
           </div>
@@ -2763,19 +2771,24 @@ export default function Dashboard({
                   toast("กรุณาระบุตัวเลือก");
                   return;
                 }
-                void saveLayout({
-                  ...layout,
-                  overrides: {
-                    ...layout.overrides,
-                    [editingColumn.id]: {
-                      id: editingColumn.id,
-                      name: String(f.get("name")).trim(),
-                      type: columnType,
-                      options,
+                void saveLayout(
+                  {
+                    ...layout,
+                    overrides: {
+                      ...layout.overrides,
+                      [editingColumn.id]: {
+                        id: editingColumn.id,
+                        name: String(f.get("name")).trim(),
+                        type: columnType,
+                        options,
+                      },
                     },
                   },
-                });
-                setModal(null);
+                  () => {
+                    setModal(null);
+                    toast("บันทึกคอลัมน์แล้ว");
+                  },
+                );
                 return;
               }
               mutate(async () => {
@@ -2860,7 +2873,7 @@ export default function Dashboard({
                 ยกเลิก
               </button>
               <button disabled={busy} className="primary">
-                เพิ่มคอลัมน์
+                {editingColumn ? "บันทึกการเปลี่ยนแปลง" : "เพิ่มคอลัมน์"}
               </button>
             </div>
           </form>

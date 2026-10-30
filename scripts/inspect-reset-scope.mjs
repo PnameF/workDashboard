@@ -22,3 +22,6 @@ for (const { name } of tables) {
 }
 const roles = await read('SELECT role, COUNT(*) AS count FROM auth_users GROUP BY role');
 console.log(JSON.stringify({ mode: 'read-only', counts, roles }, null, 2));
+if (process.argv.includes('--layout')) {
+  console.log(JSON.stringify({ settings: await read('SELECT layout FROM board_settings'), columns: await read('SELECT id,name,type,options FROM custom_columns'), groups: await read('SELECT id FROM task_groups') }, null, 2));
+}

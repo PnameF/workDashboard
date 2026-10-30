@@ -207,10 +207,10 @@ export default function ReportCalendar({
                 key={week[0]}
                 className="report-calendar-week"
                 style={{
-                  minHeight: Math.max(
+                  minHeight: `calc(${Math.max(
                     120,
                     38 + laneCount * (eventHeight + 4) + 12,
-                  ),
+                  )}px * var(--ui-font-scale, 1))`,
                 }}
               >
                 <div className="report-day-backgrounds">
@@ -233,7 +233,7 @@ export default function ReportCalendar({
                 <div
                   className="report-event-lanes"
                   style={{
-                    gridTemplateRows: `repeat(${Math.max(1, laneCount)},${eventHeight}px)`,
+                    gridTemplateRows: `repeat(${Math.max(1, laneCount)},calc(${eventHeight}px * var(--ui-font-scale, 1)))`,
                   }}
                 >
                   {segments.map(

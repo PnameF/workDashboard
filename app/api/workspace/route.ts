@@ -1,7 +1,8 @@
 import { checkAccess } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import type { Task, CustomColumn, Attachment, WorkGroup } from "@/lib/types";
-import { defaultLayout } from "@/lib/board";
+import { baseColumns, defaultLayout, type BoardLayout } from "@/lib/board";
+import { referencedColumns, removeColumnReferences } from "@/lib/column-layout";
 export const dynamic = "force-dynamic";
 export async function GET() {
   const authError = await checkAccess();
@@ -43,11 +44,26 @@ export async function GET() {
           )
           .all<{ id: number; name: string }>(),
       ]);
+    const savedLayout: BoardLayout = settings
+      ? JSON.parse(settings.layout)
+      : defaultLayout;
+    const activeIds = new Set([
+      ...baseColumns
+        .filter((c) => !savedLayout.deletedColumns?.includes(c.id))
+        .map((c) => c.id),
+      ...columns.results.map((c) => c.id),
+    ]);
+    const layout = removeColumnReferences(
+      savedLayout,
+      new Set(
+        referencedColumns(savedLayout).filter((id) => !activeIds.has(id)),
+      ),
+    );
     return Response.json({
       people: members.results.map((m) => m.name),
       members: members.results,
       groups: groups.results,
-      layout: settings ? JSON.parse(settings.layout) : defaultLayout,
+      layout,
       tasks: tasks.results.map((t) => ({
         ...t,
         custom: JSON.parse(t.custom),

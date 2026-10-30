@@ -29,6 +29,11 @@ fs.writeFileSync(
 const html =
   '<!doctype html><html lang="th"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><body><div id="root"></div><script type="module" src="/preview.js"></script></body></html>';
 const server = createServer((req, res) => {
+  if (req.url === "/responsive-check") {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<title>Responsive layout check</title>${[1440, 1920, 2560].map(width => `<iframe title="${width}px" width="${width}" height="1440" src="/reports-preview" style="display:block;border:0;margin-bottom:20px"></iframe>`).join("")}`);
+    return;
+  }
   if (/^\/api\/tasks\/[^/]+\/updates/.test(req.url)) {
     res.setHeader("Content-Type", "application/json");
     res.end(

@@ -463,8 +463,69 @@ try {
     ).status,
     200,
   );
+  // Regression: older column removal left orphan IDs in persisted layout.
+  const layoutApi = await module("app/api/table-layout/route.ts", true);
+  const workspaceApi = await module("app/api/workspace/route.ts", true);
+  const priorLayout = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  const staleLayout = {
+    ...priorLayout,
+    order: [
+      ...new Set([...priorLayout.order, "name", "date", "orphan-column"]),
+    ],
+    hidden: [...new Set([...priorLayout.hidden, "orphan-column"])],
+    overrides: {
+      ...priorLayout.overrides,
+      "orphan-column": { id: "orphan-column", name: "Removed", type: "text" },
+    },
+    widths: { ...priorLayout.widths, "orphan-column": 150 },
+    optionColors: {
+      ...priorLayout.optionColors,
+      "orphan-column": { Old: "#3159a5" },
+    },
+    calendarFields: ["name", "orphan-column"],
+  };
+  await db
+    .prepare("UPDATE board_settings SET layout=? WHERE id=1")
+    .bind(JSON.stringify(staleLayout))
+    .run();
+  const loaded = await (await workspaceApi.GET()).json();
+  assert.ok(!loaded.layout.order.includes("orphan-column"));
+  assert.ok(!loaded.layout.hidden.includes("orphan-column"));
+  assert.equal(loaded.layout.overrides["orphan-column"], undefined);
+  const renamedLayout = {
+    ...staleLayout,
+    overrides: {
+      ...staleLayout.overrides,
+      date: { id: "date", name: "วันส่งงานใหม่", type: "date", options: [] },
+    },
+  };
+  response = await layoutApi.PUT(
+    req("/api/table-layout", "PUT", renamedLayout),
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  const savedRename = await response.json();
+  assert.equal(savedRename.overrides.date.name, "วันส่งงานใหม่");
+  assert.ok(!savedRename.order.includes("orphan-column"));
+  assert.equal(savedRename.widths["orphan-column"], undefined);
+  assert.equal(savedRename.optionColors["orphan-column"], undefined);
+  const reloaded = await (await workspaceApi.GET()).json();
+  assert.equal(reloaded.layout.overrides.date.name, "วันส่งงานใหม่");
+  assert.equal(
+    (
+      await layoutApi.PUT(
+        req("/api/table-layout", "PUT", {
+          ...savedRename,
+          order: [...savedRename.order, "unknown-new-column"],
+        }),
+      )
+    ).status,
+    400,
+  );
   console.log(
-    "PASS: all migrations, authenticated updates, author enforcement, R2 image metadata, image-only posts, 2MB limit, image cleanup, global label renames, group archive/restore, permanent column deletion, and preserved updates. No remote records were created.",
+    "PASS: all migrations, authenticated updates, author enforcement, R2 image metadata, image-only posts, 2MB limit, image cleanup, global label renames, group archive/restore, permanent column deletion, preserved updates, and column rename/reload with orphan layout references. No remote records were created.",
   );
 } finally {
   child.stdin.end();

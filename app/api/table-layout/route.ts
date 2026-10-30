@@ -3,11 +3,12 @@ import { checkAccess } from "@/lib/auth";
 import { baseColumns, columnTypes, type BoardLayout } from "@/lib/board";
 import { calculations } from "@/lib/column-summary";
 import { validOptionColors } from "@/lib/option-colors";
+import { referencedColumns, removeColumnReferences } from "@/lib/column-layout";
 export async function PUT(request: Request) {
   const authError = await checkAccess(request);
   if (authError) return authError;
   try {
-    const body = (await request.json()) as BoardLayout;
+    let body = (await request.json()) as BoardLayout;
     const db = await getDb(),
       saved = await db
         .prepare("SELECT layout FROM board_settings WHERE id=1")
@@ -23,6 +24,16 @@ export async function PUT(request: Request) {
       ...baseColumns.filter((c) => !deleted.includes(c.id)).map((c) => c.id),
       ...custom.results.map((c) => c.id),
     ]);
+    const savedLayout: BoardLayout | null = saved
+      ? JSON.parse(saved.layout)
+      : null;
+    const stale = new Set([
+      ...deleted,
+      ...(savedLayout
+        ? referencedColumns(savedLayout).filter((id) => !ids.has(id))
+        : []),
+    ]);
+    body = removeColumnReferences(body, stale);
     const customGroups = await db
       .prepare("SELECT id FROM task_groups")
       .all<{ id: string }>();
