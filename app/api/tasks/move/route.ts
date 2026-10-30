@@ -5,6 +5,7 @@ type Row = {
   status: number;
   rank: number;
   group_id: string | null;
+  parent_id: string | null;
 };
 export async function POST(request: Request) {
   const authError = await checkAccess(request);
@@ -35,16 +36,33 @@ export async function POST(request: Request) {
     const read = () =>
       db
         .prepare(
-          "SELECT id,status,group_id,COALESCE(sort_order,rowid*1024) AS rank FROM tasks ORDER BY COALESCE(sort_order,rowid*1024),rowid",
+          "SELECT id,status,group_id,parent_id,COALESCE(sort_order,rowid*1024) AS rank FROM tasks WHERE archived_at IS NULL ORDER BY COALESCE(sort_order,rowid*1024),rowid",
         )
         .all<Row>();
     let rows = (await read()).results;
     const task = rows.find((t) => t.id === id);
     if (!task) return Response.json({ error: "ไม่พบงาน" }, { status: 404 });
+    if (
+      task.parent_id &&
+      (task.group_id || (task.status === 2 ? "done" : "todo")) !== group
+    )
+      return Response.json(
+        { error: "งานย่อยต้องอยู่กลุ่มเดียวกับงานแม่ กรุณาย้ายงานแม่" },
+        { status: 400 },
+      );
+    if (
+      anchorId &&
+      rows.find((t) => t.id === anchorId)?.parent_id !== task.parent_id
+    )
+      return Response.json(
+        { error: "เรียงงานย่อยได้เฉพาะภายในงานแม่เดียวกัน" },
+        { status: 400 },
+      );
     const rank = () => {
       const target = rows.filter(
         (t) =>
           t.id !== id &&
+          t.parent_id === task.parent_id &&
           (t.group_id || (t.status === 2 ? "done" : "todo")) === group,
       );
       let index =
@@ -93,10 +111,14 @@ export async function POST(request: Request) {
       );
     const status = task.status;
     const groupId = group;
-    await db
-      .prepare("UPDATE tasks SET status=?,sort_order=?,group_id=? WHERE id=?")
-      .bind(status, destination.value, groupId, id)
-      .run();
+    await db.batch([
+      db
+        .prepare("UPDATE tasks SET status=?,sort_order=?,group_id=? WHERE id=?")
+        .bind(status, destination.value, groupId, id),
+      db
+        .prepare("UPDATE tasks SET group_id=? WHERE parent_id=?")
+        .bind(groupId, id),
+    ]);
     return Response.json({ id, status, sort_order: destination.value });
   } catch (error) {
     console.error("Task move failed", error);

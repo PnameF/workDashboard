@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import MultiChoice from "./choice-picker";
@@ -14,6 +14,7 @@ import ColorPicker from "./color-picker";
 import { useSidebar } from "./use-sidebar";
 import AdvancedFilters from "./advanced-filters";
 import TaskEditor from "./task-editor";
+import SubtaskTable from "./subtask-table";
 import OptionEditor from "./option-editor";
 import { optionColor, optionPalette } from "@/lib/option-colors";
 import {
@@ -72,6 +73,7 @@ import {
 } from "@/lib/types";
 import { nameInitials, type AuthUser } from "@/lib/auth-types";
 import { memberColor } from "@/lib/member-color";
+import { isSubtaskExpanded, subtaskRows } from "@/lib/subtasks";
 import { todayKey, parseDay, monthNames } from "@/lib/timeline";
 import {
   taskInCalendarMonth,
@@ -152,6 +154,10 @@ export default function Dashboard({
   );
   const [newTaskStatus, setNewTaskStatus] = useState(0);
   const [editingColumn, setEditingColumn] = useState<CustomColumn | null>(null);
+  const [newTaskParent, setNewTaskParent] = useState<string | null>(null);
+  const [collapsedSubtasks, setCollapsedSubtasks] = useState<
+    Record<string, boolean>
+  >({});
   const [dragItem, setDragItem] = useState<{
     kind: "task" | "group";
     id: string;
@@ -263,8 +269,10 @@ export default function Dashboard({
     try {
       await action();
       setError("");
+      return true;
     } catch (e) {
       toast(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -339,13 +347,9 @@ export default function Dashboard({
     await mutate(async () => {
       for (const task of selectedTasks) {
         await api("/api/tasks", "DELETE", { id: task.id });
-        setData((d) => ({
-          ...d,
-          tasks: d.tasks.filter((t) => t.id !== task.id),
-          attachments: d.attachments.filter((a) => a.task_id !== task.id),
-        }));
         setSelectedIds((ids) => ids.filter((id) => id !== task.id));
       }
+      setData(await api<Workspace>("/api/workspace"));
       toast(`ลบ ${selectedTasks.length} งานแล้ว`);
       setModal(null);
     });
@@ -769,6 +773,10 @@ export default function Dashboard({
         (t) => (t.group_id || (t.status === 2 ? "done" : "todo")) === g.id,
       ),
     }))
+    .map((g) => ({
+      ...g,
+      rows: subtaskRows(data.tasks, g.tasks, collapsedSubtasks),
+    }))
     .sort((a, b) => groupOrder.indexOf(a.id) - groupOrder.indexOf(b.id));
   const done = list.filter((t) => t.status === 2).length,
     percent = list.length ? Math.round((done / list.length) * 100) : 0;
@@ -782,7 +790,9 @@ export default function Dashboard({
     t: Task | null = null,
     status = 0,
     groupId: string | null = null,
+    parentId: string | null = null,
   ) {
+    setNewTaskParent(parentId);
     setNewTaskStatus(status);
     setNewTaskGroup(groupId);
     setEditing(t);
@@ -795,6 +805,16 @@ export default function Dashboard({
         ...d,
         tasks: d.tasks.map((x) => (x.id === t.id ? updated : x)),
       }));
+    });
+  }
+  async function addSubtask(parent: Task, name: string) {
+    return mutate(async () => {
+      const child = await api<Task>("/api/tasks", "POST", {
+        name,
+        parent_id: parent.id,
+      });
+      setData((current) => ({ ...current, tasks: [...current.tasks, child] }));
+      setCollapsedSubtasks((current) => ({ ...current, [parent.id]: false }));
     });
   }
   async function quickAddTask(groupId: string) {
@@ -821,11 +841,7 @@ export default function Dashboard({
   async function deleteTask(t: Task) {
     await mutate(async () => {
       await api("/api/tasks", "DELETE", { id: t.id });
-      setData((d) => ({
-        ...d,
-        tasks: d.tasks.filter((x) => x.id !== t.id),
-        attachments: d.attachments.filter((a) => a.task_id !== t.id),
-      }));
+      setData(await api<Workspace>("/api/workspace"));
       toast("ลบงานเรียบร้อย");
       setModal(null);
     });
@@ -1226,6 +1242,9 @@ export default function Dashboard({
                           <tr key={t.id}>
                             <td>
                               <strong>{t.name}</strong>
+                              {t.parent_name && (
+                                <small>↳ งานแม่: {t.parent_name}</small>
+                              )}
                               {t.file_count > 0 && (
                                 <small>
                                   <FiFile />
@@ -1498,6 +1517,7 @@ export default function Dashboard({
                     </div>
                   </div>
                   <ReportCalendar
+                    allTasks={data.tasks}
                     groups={data.groups || []}
                     tasks={list}
                     columns={data.columns}
@@ -2162,149 +2182,296 @@ export default function Dashboard({
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {group.tasks.map((t, i) => (
-                                    <tr
-                                      key={t.id}
-                                      data-task-id={t.id}
-                                      data-selected={
-                                        selectedIds.includes(t.id) || undefined
-                                      }
-                                      className={
-                                        dragItem?.kind === "task" &&
-                                        dragItem.id === t.id
-                                          ? "is-dragging-task"
-                                          : ""
-                                      }
-                                      data-row-drop={
-                                        dropHint?.row === t.id
-                                          ? dropHint.after
-                                            ? "after"
-                                            : "before"
-                                          : undefined
-                                      }
-                                      onDragOver={(e) => {
-                                        if (dragItem?.kind !== "task" || busy)
-                                          return;
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        const r =
-                                          e.currentTarget.getBoundingClientRect();
-                                        setDropHint({
-                                          group: group.id,
-                                          row: t.id,
-                                          after:
-                                            e.clientY > r.top + r.height / 2,
-                                        });
-                                      }}
-                                      onDrop={(e) => {
-                                        if (dragItem?.kind !== "task" || busy)
-                                          return;
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (dragItem.id === t.id) {
-                                          clearBoardDrag();
-                                          return;
-                                        }
-                                        void moveTask(
-                                          dragItem.id,
-                                          group.id,
-                                          t.id,
-                                          dropHint?.after,
-                                        );
-                                      }}
-                                    >
-                                      <td className="task-selection-cell">
-                                        <input
-                                          type="checkbox"
-                                          className="task-checkbox"
-                                          aria-label={`เลือกงาน ${t.name}`}
-                                          checked={selectedIds.includes(t.id)}
-                                          disabled={busy}
-                                          onChange={() => toggleTasks([t.id])}
-                                        />
-                                      </td>
-                                      <td className="text-[#a8b1c0]">
-                                        <button
-                                          type="button"
-                                          className="task-drag-handle"
-                                          draggable={!busy}
-                                          disabled={busy}
-                                          aria-label={`ลากย้ายงาน ${t.name}`}
-                                          title="ลากเพื่อย้ายงาน · ลูกศรขึ้น/ลงเพื่อเรียง · Ctrl+ลูกศรเพื่อย้ายกลุ่ม"
-                                          onDragStart={(e) => {
-                                            e.stopPropagation();
-                                            e.dataTransfer.effectAllowed =
-                                              "move";
-                                            e.dataTransfer.setData(
-                                              "application/x-workly-task",
-                                              t.id,
-                                            );
-                                            setDragItem({
-                                              kind: "task",
-                                              id: t.id,
-                                            });
-                                          }}
-                                          onDragEnd={clearBoardDrag}
-                                          onKeyDown={(e) => {
+                                  {group.rows
+                                    .filter((t) => !t.parent_id)
+                                    .map((t, i) => (
+                                      <Fragment key={t.id}>
+                                        <tr
+                                          key={t.id}
+                                          data-task-id={t.id}
+                                          data-subtask={
+                                            !!t.parent_id || undefined
+                                          }
+                                          data-selected={
+                                            selectedIds.includes(t.id) ||
+                                            undefined
+                                          }
+                                          className={
+                                            dragItem?.kind === "task" &&
+                                            dragItem.id === t.id
+                                              ? "is-dragging-task"
+                                              : ""
+                                          }
+                                          data-row-drop={
+                                            dropHint?.row === t.id
+                                              ? dropHint.after
+                                                ? "after"
+                                                : "before"
+                                              : undefined
+                                          }
+                                          onDragOver={(e) => {
                                             if (
-                                              ![
-                                                "ArrowUp",
-                                                "ArrowDown",
-                                              ].includes(e.key)
+                                              dragItem?.kind !== "task" ||
+                                              busy
                                             )
                                               return;
                                             e.preventDefault();
-                                            const offset =
-                                              e.key === "ArrowDown" ? 1 : -1;
-                                            if (e.ctrlKey) {
-                                              const target =
-                                                groups[
-                                                  groups.findIndex(
-                                                    (g) => g.id === group.id,
-                                                  ) + offset
-                                                ];
-                                              if (target)
-                                                void moveTask(t.id, target.id);
-                                            } else {
-                                              const target =
-                                                group.tasks[i + offset];
-                                              if (target)
-                                                void moveTask(
-                                                  t.id,
-                                                  group.id,
-                                                  target.id,
-                                                  offset > 0,
-                                                );
+                                            e.stopPropagation();
+                                            const r =
+                                              e.currentTarget.getBoundingClientRect();
+                                            setDropHint({
+                                              group: group.id,
+                                              row: t.id,
+                                              after:
+                                                e.clientY >
+                                                r.top + r.height / 2,
+                                            });
+                                          }}
+                                          onDrop={(e) => {
+                                            if (
+                                              dragItem?.kind !== "task" ||
+                                              busy
+                                            )
+                                              return;
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (dragItem.id === t.id) {
+                                              clearBoardDrag();
+                                              return;
                                             }
+                                            void moveTask(
+                                              dragItem.id,
+                                              group.id,
+                                              t.id,
+                                              dropHint?.after,
+                                            );
                                           }}
                                         >
-                                          <span className="row-index">
-                                            {String(i + 1).padStart(2, "0")}
-                                          </span>
-                                          <span className="row-grip">⠿</span>
-                                        </button>
-                                      </td>
+                                          <td className="task-selection-cell">
+                                            <input
+                                              type="checkbox"
+                                              className="task-checkbox"
+                                              aria-label={`เลือกงาน ${t.name}`}
+                                              checked={selectedIds.includes(
+                                                t.id,
+                                              )}
+                                              disabled={busy}
+                                              onChange={() =>
+                                                toggleTasks([t.id])
+                                              }
+                                            />
+                                          </td>
+                                          <td className="text-[#a8b1c0]">
+                                            <button
+                                              type="button"
+                                              className="task-drag-handle"
+                                              draggable={!busy}
+                                              disabled={busy}
+                                              aria-label={`ลากย้ายงาน ${t.name}`}
+                                              title="ลากเพื่อย้ายงาน · ลูกศรขึ้น/ลงเพื่อเรียง · Ctrl+ลูกศรเพื่อย้ายกลุ่ม"
+                                              onDragStart={(e) => {
+                                                e.stopPropagation();
+                                                e.dataTransfer.effectAllowed =
+                                                  "move";
+                                                e.dataTransfer.setData(
+                                                  "application/x-workly-task",
+                                                  t.id,
+                                                );
+                                                setDragItem({
+                                                  kind: "task",
+                                                  id: t.id,
+                                                });
+                                              }}
+                                              onDragEnd={clearBoardDrag}
+                                              onKeyDown={(e) => {
+                                                if (
+                                                  ![
+                                                    "ArrowUp",
+                                                    "ArrowDown",
+                                                  ].includes(e.key)
+                                                )
+                                                  return;
+                                                e.preventDefault();
+                                                const offset =
+                                                  e.key === "ArrowDown"
+                                                    ? 1
+                                                    : -1;
+                                                if (e.ctrlKey) {
+                                                  const target =
+                                                    groups[
+                                                      groups.findIndex(
+                                                        (g) =>
+                                                          g.id === group.id,
+                                                      ) + offset
+                                                    ];
+                                                  if (target)
+                                                    void moveTask(
+                                                      t.id,
+                                                      target.id,
+                                                    );
+                                                } else {
+                                                  const target =
+                                                    group.rows.filter(
+                                                      (t) => !t.parent_id,
+                                                    )[i + offset];
+                                                  if (target)
+                                                    void moveTask(
+                                                      t.id,
+                                                      group.id,
+                                                      target.id,
+                                                      offset > 0,
+                                                    );
+                                                }
+                                              }}
+                                            >
+                                              <span className="row-index">
+                                                {String(i + 1).padStart(2, "0")}
+                                              </span>
+                                              <span className="row-grip">
+                                                ⠿
+                                              </span>
+                                            </button>
+                                          </td>
 
-                                      {visibleColumns.map((c) => (
-                                        <td key={c.id}>
-                                          {renderCell(t, c.id)}
-                                        </td>
-                                      ))}
-                                      <td>
-                                        <button
-                                          disabled={busy}
-                                          aria-label={`ลบงาน ${t.name}`}
-                                          className="text-[#adb5c3]"
-                                          onClick={() => {
-                                            setEditing(t);
-                                            setModal("task");
-                                          }}
-                                        >
-                                          <FiChevronRight />
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  ))}
+                                          {visibleColumns.map((c) => (
+                                            <td key={c.id}>
+                                              {c.id === "name" ? (
+                                                <div className="task-tree-name">
+                                                  {t.parent_id ? (
+                                                    <span
+                                                      className="subtask-branch"
+                                                      aria-label="งานย่อย"
+                                                    >
+                                                      ↳
+                                                    </span>
+                                                  ) : (
+                                                    <button
+                                                      type="button"
+                                                      className="subtask-toggle"
+                                                      aria-label={`พับหรือขยายงานย่อย ${t.name}`}
+                                                      aria-expanded={isSubtaskExpanded(
+                                                        t.id,
+                                                        group.tasks,
+                                                        collapsedSubtasks,
+                                                      )}
+                                                      onClick={() =>
+                                                        setCollapsedSubtasks(
+                                                          (current) => ({
+                                                            ...current,
+                                                            [t.id]:
+                                                              isSubtaskExpanded(
+                                                                t.id,
+                                                                group.tasks,
+                                                                current,
+                                                              ),
+                                                          }),
+                                                        )
+                                                      }
+                                                    >
+                                                      <FiChevronRight
+                                                        className={
+                                                          isSubtaskExpanded(
+                                                            t.id,
+                                                            group.tasks,
+                                                            collapsedSubtasks,
+                                                          )
+                                                            ? "expanded"
+                                                            : ""
+                                                        }
+                                                      />
+                                                    </button>
+                                                  )}
+                                                  {renderCell(t, c.id)}
+                                                  {!t.parent_id && (
+                                                    <>
+                                                      {data.tasks.some(
+                                                        (x) =>
+                                                          x.parent_id === t.id,
+                                                      ) && (
+                                                        <span className="subtask-count">
+                                                          {
+                                                            data.tasks.filter(
+                                                              (x) =>
+                                                                x.parent_id ===
+                                                                  t.id &&
+                                                                x.status === 2,
+                                                            ).length
+                                                          }
+                                                          /
+                                                          {
+                                                            data.tasks.filter(
+                                                              (x) =>
+                                                                x.parent_id ===
+                                                                t.id,
+                                                            ).length
+                                                          }
+                                                        </span>
+                                                      )}
+                                                    </>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                renderCell(t, c.id)
+                                              )}
+                                            </td>
+                                          ))}
+                                          <td>
+                                            <button
+                                              disabled={busy}
+                                              aria-label={`แก้ไขงาน ${t.name}`}
+                                              className="text-[#adb5c3]"
+                                              onClick={() => {
+                                                setEditing(t);
+                                                setModal("task");
+                                              }}
+                                            >
+                                              <FiChevronRight />
+                                            </button>
+                                          </td>
+                                        </tr>
+                                        {isSubtaskExpanded(
+                                          t.id,
+                                          group.tasks,
+                                          collapsedSubtasks,
+                                        ) && (
+                                          <tr className="subtask-table-row">
+                                            <td
+                                              colSpan={
+                                                visibleColumns.length + 3
+                                              }
+                                            >
+                                              <SubtaskTable
+                                                parent={t}
+                                                tasks={group.tasks.filter(
+                                                  (child) =>
+                                                    child.parent_id === t.id,
+                                                )}
+                                                columns={visibleColumns.map(
+                                                  (column) => ({
+                                                    id: column.id,
+                                                    name:
+                                                      layout.overrides[
+                                                        column.id
+                                                      ]?.name || column.name,
+                                                    width: columnWidth(
+                                                      column.id,
+                                                    ),
+                                                  }),
+                                                )}
+                                                busy={busy}
+                                                selected={selectedIds}
+                                                onSelect={toggleTasks}
+                                                renderCell={renderCell}
+                                                onOpen={taskModal}
+                                                onAdd={(name) =>
+                                                  addSubtask(t, name)
+                                                }
+                                              />
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </Fragment>
+                                    ))}
                                   <tr className="group-add-row">
                                     <td className="task-selection-cell" />
                                     <td />
@@ -2698,6 +2865,15 @@ export default function Dashboard({
         )}
         {modal === "task" && (
           <TaskEditor
+            parentTask={data.tasks.find(
+              (t) => t.id === (editing?.parent_id || newTaskParent),
+            )}
+            subtasks={
+              editing
+                ? data.tasks.filter((t) => t.parent_id === editing.id)
+                : []
+            }
+            onOpenTask={taskModal}
             onEditOption={editOption}
             group={taskGroupInfo(
               editing || { group_id: newTaskGroup, status: newTaskStatus },
@@ -2718,6 +2894,7 @@ export default function Dashboard({
                 hours: null,
                 custom: {},
                 group_id: newTaskGroup,
+                parent_id: newTaskParent,
               }
             }
             columns={data.columns}
@@ -2882,7 +3059,10 @@ export default function Dashboard({
         {modal === "bulk-delete" && (
           <div>
             <h2>ลบงานที่เลือก {selectedTasks.length} งาน?</h2>
-            <p>งานและไฟล์แนบของงานเหล่านี้จะถูกลบถาวร</p>
+            <p>
+              งานที่เลือกและงานย่อยทั้งหมด รวมงานย่อยที่เก็บถาวร
+              พร้อมไฟล์แนบและอัปเดต จะถูกลบถาวร
+            </p>
             <ul className="bulk-delete-list">
               {selectedTasks.map((t) => (
                 <li key={t.id}>{t.name}</li>

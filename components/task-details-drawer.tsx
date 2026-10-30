@@ -70,6 +70,7 @@ function tone(value: string) {
 }
 type Props = {
   task: Task;
+  parentTask?: Task;
   columns: CustomColumn[];
   layout: BoardLayout;
   people: string[];
@@ -79,6 +80,7 @@ type Props = {
 };
 export default function TaskDetailsDrawer({
   task,
+  parentTask,
   columns,
   layout,
   people,
@@ -137,6 +139,9 @@ export default function TaskDetailsDrawer({
               รายละเอียดงาน
             </span>
             <h2 id={titleId}>{task.name}</h2>
+            {parentTask && (
+              <p className="task-parent-link">↳ งานแม่: {parentTask.name}</p>
+            )}
             <span className="task-group-chip">
               <i style={{ background: group.color }} />
               {group.name}

@@ -1,6 +1,7 @@
 import { checkAccess } from "@/lib/auth";
 import { getDb, getBucket } from "@/lib/db";
 import { defaultLayout } from "@/lib/board";
+import { taskTreeSql } from "@/lib/subtasks";
 export async function POST(request: Request) {
   const authError = await checkAccess(request);
   if (authError) return authError;
@@ -97,9 +98,9 @@ export async function PATCH(request: Request) {
           ? (
               await db
                 .prepare(
-                  "SELECT id FROM attachments WHERE task_id IN(SELECT value FROM json_each(?)) UNION ALL SELECT id FROM task_update_files WHERE task_id IN(SELECT value FROM json_each(?))",
+                  `${taskTreeSql} SELECT id FROM attachments WHERE task_id IN(SELECT id FROM tree) UNION ALL SELECT id FROM task_update_files WHERE task_id IN(SELECT id FROM tree)`,
                 )
-                .bind(tasks, tasks)
+                .bind(tasks)
                 .all<{ id: string }>()
             ).results
           : [],
@@ -115,13 +116,13 @@ export async function PATCH(request: Request) {
         action === "archive"
           ? db
               .prepare(
-                "UPDATE tasks SET archived_at=CURRENT_TIMESTAMP,archived_group_id=? WHERE id IN(SELECT value FROM json_each(?)) AND archived_at IS NULL",
+                "UPDATE tasks SET archived_at=CURRENT_TIMESTAMP,archived_group_id=?,archived_parent_id=CASE WHEN parent_id IN(SELECT value FROM json_each(?)) THEN parent_id ELSE NULL END WHERE id IN(SELECT value FROM json_each(?)) AND archived_at IS NULL",
               )
-              .bind(id, tasks)
+              .bind(id, tasks, tasks)
           : action === "restore"
             ? db
                 .prepare(
-                  "UPDATE tasks SET archived_at=NULL,archived_group_id=NULL WHERE id IN(SELECT value FROM json_each(?))",
+                  "UPDATE tasks SET archived_at=NULL,archived_group_id=NULL,archived_parent_id=NULL WHERE id IN(SELECT value FROM json_each(?))",
                 )
                 .bind(tasks)
             : db

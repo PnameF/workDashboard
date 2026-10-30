@@ -524,6 +524,290 @@ try {
     ).status,
     400,
   );
+  const bulkApi = await module("app/api/tasks/bulk/route.ts", true);
+  const moveApi = await module("app/api/tasks/move/route.ts", true);
+  async function createTask(name, parent_id = null, group_id = "todo") {
+    const res = await taskApi.POST(
+      req("/api/tasks", "POST", { name, parent_id, group_id }),
+    );
+    assert.equal(res.status, 201, await res.clone().text());
+    return res.json();
+  }
+  async function bulk(action, ids) {
+    const res = await bulkApi.POST(
+      req("/api/tasks/bulk", "POST", { action, ids }),
+    );
+    assert.equal(
+      res.status,
+      action === "duplicate" ? 201 : 200,
+      await res.clone().text(),
+    );
+    return res.json();
+  }
+  const parent = await createTask("Parent"),
+    child = await createTask("Child", parent.id, "done"),
+    secondChild = await createTask("Second child", parent.id);
+  assert.equal(child.parent_id, parent.id);
+  assert.equal(child.group_id, parent.group_id);
+  assert.equal(
+    (
+      await taskApi.POST(
+        req("/api/tasks", "POST", { name: "Nested", parent_id: child.id }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await taskApi.POST(
+        req("/api/tasks", "POST", { name: "Missing", parent_id: "not-found" }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await taskApi.PATCH(
+        req("/api/tasks", "PATCH", {
+          ...child,
+          parent_id: child.id,
+          status: 2,
+        }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT parent_id FROM tasks WHERE id=?")
+        .bind(child.id)
+        .first()
+    ).parent_id,
+    parent.id,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT status FROM tasks WHERE id=?")
+        .bind(parent.id)
+        .first()
+    ).status,
+    -1,
+  );
+  assert.equal(
+    (
+      await moveApi.POST(
+        req("/api/tasks/move", "POST", { id: child.id, group: "done" }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await moveApi.POST(
+        req("/api/tasks/move", "POST", { id: parent.id, group: "done" }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT group_id FROM tasks WHERE id=?")
+        .bind(child.id)
+        .first()
+    ).group_id,
+    "done",
+  );
+  await bulk("archive", [child.id]);
+  await bulk("archive", [parent.id]);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tasks WHERE parent_id=? AND archived_at IS NOT NULL",
+        )
+        .bind(parent.id)
+        .first()
+    ).count,
+    2,
+  );
+  await bulk("restore", [parent.id]);
+  assert.ok(
+    (
+      await db
+        .prepare("SELECT archived_at FROM tasks WHERE id=?")
+        .bind(child.id)
+        .first()
+    ).archived_at,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT archived_at FROM tasks WHERE id=?")
+        .bind(secondChild.id)
+        .first()
+    ).archived_at,
+    null,
+  );
+  await bulk("restore", [child.id]);
+  await bulk("archive", [parent.id]);
+  await bulk("restore", [child.id]);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tasks WHERE (id=? OR parent_id=?) AND archived_at IS NOT NULL",
+        )
+        .bind(parent.id, parent.id)
+        .first()
+    ).count,
+    0,
+  );
+  const copied = await bulk("duplicate", [parent.id, child.id]);
+  assert.equal(copied.ids.length, 3);
+  const { results: copies } = await db
+    .prepare(
+      "SELECT id,parent_id FROM tasks WHERE id IN(SELECT value FROM json_each(?))",
+    )
+    .bind(JSON.stringify(copied.ids))
+    .all();
+  const copiedParent = copies.find((t) => !t.parent_id);
+  assert.equal(copies.filter((t) => t.parent_id === copiedParent.id).length, 2);
+  const tree = await module("lib/subtasks.ts");
+  const familyGroup = await (
+    await groups.POST(
+      req("/api/groups", "POST", { name: "Subtask group", color: "#3159a5" }),
+    )
+  ).json();
+  const groupedParent = await createTask(
+    "Grouped parent",
+    null,
+    familyGroup.id,
+  );
+  await createTask("Grouped child", groupedParent.id);
+  assert.equal(
+    (
+      await groups.PATCH(
+        req("/api/groups", "PATCH", {
+          id: familyGroup.id,
+          action: "archive",
+          expectedCount: 2,
+        }),
+      )
+    ).status,
+    200,
+  );
+  await bulk("restore", [groupedParent.id]);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tasks WHERE group_id=? AND archived_at IS NULL",
+        )
+        .bind(familyGroup.id)
+        .first()
+    ).count,
+    2,
+  );
+  assert.equal(
+    (
+      await groups.PATCH(
+        req("/api/groups", "PATCH", {
+          id: familyGroup.id,
+          action: "delete",
+          expectedCount: 2,
+        }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT COUNT(*) AS count FROM tasks WHERE group_id=?")
+        .bind(familyGroup.id)
+        .first()
+    ).count,
+    0,
+  );
+  assert.equal(tree.isSubtaskExpanded(parent.id, [parent, child], {}), false);
+  assert.equal(
+    tree.isSubtaskExpanded(parent.id, [parent, child], { [parent.id]: false }),
+    true,
+  );
+  assert.equal(
+    tree.isSubtaskExpanded(parent.id, [child], { [parent.id]: true }),
+    false,
+  );
+  assert.deepEqual(
+    tree
+      .subtaskRows([parent, child, secondChild], [child], {})
+      .map((t) => t.id),
+    [parent.id, child.id],
+  );
+  assert.deepEqual(
+    tree
+      .subtaskRows([parent, child, secondChild], [parent, child, secondChild], {
+        [parent.id]: true,
+      })
+      .map((t) => t.id),
+    [parent.id],
+  );
+  // Even a separately archived child's files must be deleted with its parent.
+  await bulk("archive", [child.id]);
+  await db
+    .prepare(
+      "INSERT INTO attachments(id,task_id,name,content_type,size) VALUES('child-file',?,'image.png','image/png',8)",
+    )
+    .bind(child.id)
+    .run();
+  objects.set("child-file", new Uint8Array([1]));
+  await db
+    .prepare(
+      "INSERT INTO task_updates(id,task_id,body,created_at,updated_at) VALUES('child-update',?,'Note',1,1)",
+    )
+    .bind(child.id)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO task_update_files(id,task_id,update_id,name,content_type,size,url) VALUES('child-update-image',?,'child-update','image.png','image/png',8,'https://assets.example.test/child-update-image')",
+    )
+    .bind(child.id)
+    .run();
+  objects.set("child-update-image", new Uint8Array([1]));
+  assert.equal(
+    (await taskApi.DELETE(req("/api/tasks", "DELETE", { id: parent.id })))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tasks WHERE parent_id=? OR id=?",
+        )
+        .bind(parent.id, parent.id)
+        .first()
+    ).count,
+    0,
+  );
+  assert.equal(objects.has("child-file"), false);
+  assert.equal(objects.has("child-update-image"), false);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM task_updates WHERE id='child-update'",
+        )
+        .first()
+    ).count,
+    0,
+  );
+  console.log(
+    "PASS: subtask create/validation, independent status, sibling moves, parent archive/restore/duplicate, filtered hierarchy, and cascading file/update cleanup.",
+  );
   console.log(
     "PASS: all migrations, authenticated updates, author enforcement, R2 image metadata, image-only posts, 2MB limit, image cleanup, global label renames, group archive/restore, permanent column deletion, preserved updates, and column rename/reload with orphan layout references. No remote records were created.",
   );

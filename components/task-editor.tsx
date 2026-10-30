@@ -38,6 +38,9 @@ export default function TaskEditor({
   onPreview,
   group,
   onEditOption,
+  parentTask,
+  subtasks = [],
+  onOpenTask,
 }: {
   task: Task;
   columns: CustomColumn[];
@@ -56,8 +59,12 @@ export default function TaskEditor({
     value: string,
     onRename?: (next: string) => void,
   ) => void;
+  parentTask?: Task;
+  subtasks?: Task[];
+  onOpenTask?: (task: Task) => void;
 }) {
   const [draft, setDraft] = useState(task),
+    [confirmDelete, setConfirmDelete] = useState(false),
     [tab, setTab] = useState<"details" | "updates">("details"),
     tabsId = useId(),
     [error, setError] = useState(""),
@@ -275,13 +282,30 @@ export default function TaskEditor({
           <FiEdit3 size={20} />
         </div>
         <div>
-          <h2>{task.id ? "แก้ไขงาน" : "เพิ่มงานใหม่"}</h2>
+          <h2>
+            {task.parent_id
+              ? task.id
+                ? "แก้ไขงานย่อย"
+                : "เพิ่มงานย่อย"
+              : task.id
+                ? "แก้ไขงาน"
+                : "เพิ่มงานใหม่"}
+          </h2>
           <p>
             <span className="task-group-chip">
               <i style={{ background: group.color }} />
               {group.name}
             </span>
           </p>
+          {parentTask && (
+            <button
+              type="button"
+              className="task-parent-link"
+              onClick={() => onOpenTask?.(parentTask)}
+            >
+              ↳ งานแม่: {parentTask.name}
+            </button>
+          )}
         </div>
         <button type="button" aria-label="ปิดแก้ไขงาน" onClick={onCancel}>
           <FiX size={20} />
@@ -323,12 +347,41 @@ export default function TaskEditor({
         )}
       </div>
       <footer className="task-editor-footer">
+        {confirmDelete && (
+          <div className="subtask-delete-confirm" role="alert">
+            <p>
+              {task.parent_id
+                ? "ลบงานย่อยนี้ รวมไฟล์และอัปเดตถาวร?"
+                : "ลบงานนี้และงานย่อยทั้งหมด รวมงานย่อยที่เก็บถาวร ไฟล์และอัปเดตถาวร?"}
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmDelete(false)}
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="button"
+              className="danger-button"
+              disabled={busy}
+              onClick={onDelete}
+            >
+              ยืนยันลบถาวร
+            </button>
+          </div>
+        )}
+        {tab === "details" && onDelete && subtasks.length > 0 && (
+          <p className="subtask-delete-note">
+            ลบงานแม่จะลบงานย่อยทั้งหมด รวมงานย่อยที่เก็บถาวร
+          </p>
+        )}
         {tab === "details" && onDelete && (
           <button
             type="button"
             className="task-editor-delete"
             disabled={busy}
-            onClick={onDelete}
+            onClick={() => setConfirmDelete(true)}
           >
             <FiTrash2 />
             ลบงาน

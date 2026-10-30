@@ -21,6 +21,7 @@ export type CustomColumn = {
   options?: string[];
 };
 export type Task = {
+  parent_id?: string | null;
   created_by?: number | null;
   group_id?: string | null;
   id: string;
@@ -44,7 +45,9 @@ export type Attachment = {
   size: number;
 };
 export type ArchivedTask = {
-  archived_group_id?:string|null;
+  parent_id?: string | null;
+  parent_name?: string | null;
+  archived_group_id?: string | null;
   id: string;
   name: string;
   archived_at: string;

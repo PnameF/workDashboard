@@ -29,6 +29,7 @@ for (const file of [
   "components/update-markdown.tsx",
   "components/image-viewer.tsx",
   "components/timeline-picker.tsx",
+  "components/subtask-table.tsx",
 ]) {
   let source = ts.transpileModule(fs.readFileSync(file, "utf8"), {
     compilerOptions: {
@@ -55,6 +56,34 @@ const t = await import(pathToFileURL(path.join(root, "lib/timeline.mjs"))),
   { validTimelines } = await import(
     pathToFileURL(path.join(root, "lib/timeline-validation.mjs"))
   );
+const { default: SubtaskTable } = await import(
+  pathToFileURL(path.join(root, "components/subtask-table.mjs"))
+);
+const subtaskMarkup = renderToStaticMarkup(
+  React.createElement(SubtaskTable, {
+    parent: { id: "parent", name: "งานแม่" },
+    tasks: [{ id: "child", name: "งานลูก", parent_id: "parent" }],
+    columns: [
+      { id: "name", name: "ชื่องาน", width: 260 },
+      { id: "status", name: "สถานะใหม่", width: 140 },
+    ],
+    busy: false,
+    selected: [],
+    onSelect() {},
+    renderCell(task, column) {
+      return column === "name" ? task.name : "ยังไม่เริ่ม";
+    },
+    onOpen() {},
+    async onAdd() {
+      return true;
+    },
+  }),
+);
+assert.ok(subtaskMarkup.includes('aria-label="งานย่อยของ งานแม่"'));
+assert.ok(subtaskMarkup.includes('scope="col">งานย่อย</th>'));
+assert.ok(subtaskMarkup.includes('scope="col">สถานะใหม่</th>'));
+assert.ok(subtaskMarkup.includes("เพิ่มงานย่อยใน งานแม่"));
+assert.ok(subtaskMarkup.includes("งานลูก"));
 assert.deepEqual(t.parseRange(["2026-10-30", "2026-11-03"]), [
   "2026-10-30",
   "2026-11-03",

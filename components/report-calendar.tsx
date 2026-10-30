@@ -22,6 +22,7 @@ import TaskDetailsDrawer from "./task-details-drawer";
 import type { WorkGroup } from "@/lib/types";
 type Props = {
   tasks: Task[];
+  allTasks?: Task[];
   columns: CustomColumn[];
   layout: BoardLayout;
   people: string[];
@@ -36,6 +37,7 @@ type Props = {
 };
 export default function ReportCalendar({
   tasks,
+  allTasks = tasks,
   columns,
   layout,
   people,
@@ -293,6 +295,9 @@ export default function ReportCalendar({
           groups={groups}
           key={detail.taskId}
           task={taskMap.get(detail.taskId)!}
+          parentTask={allTasks.find(
+            (t) => t.id === taskMap.get(detail.taskId)?.parent_id,
+          )}
           columns={columns}
           layout={layout}
           people={people}
