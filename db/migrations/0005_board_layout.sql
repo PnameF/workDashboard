@@ -1,0 +1,1 @@
+CREATE TABLE board_settings (id INTEGER PRIMARY KEY CHECK(id=1),layout TEXT NOT NULL);

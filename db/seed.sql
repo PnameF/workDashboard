@@ -1,0 +1,12 @@
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-1','ออกแบบหน้า Dashboard ใหม่',1,1,'2026-10-30','สูง','Design',6,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-2','พัฒนาระบบ Login และ Authentication',0,1,'2026-10-30','สูง','Development',8,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-3','วางแผนคอนเทนต์ประจำเดือน พฤศจิกายน',3,2,'2026-10-29','ปานกลาง','Marketing',3,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-4','ทดสอบระบบการแจ้งเตือน',2,0,'2026-11-02','ปานกลาง','Development',4,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-5','ออกแบบ Design System',1,2,'2026-10-28','สูง','Design',5,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-6','ปรับปรุง API สำหรับจัดการข้อมูล',0,2,'2026-10-28','ปานกลาง','Development',6,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-7','จัดทำรายงานผลแคมเปญ',3,2,'2026-10-27','ต่ำ','Marketing',2,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-8','ตรวจสอบการแสดงผลบนมือถือ',2,3,'2026-10-31','สูง','Development',4,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-9','ออกแบบหน้า My Work',1,0,'2026-11-03','ปานกลาง','Design',5,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-10','ปรับปรุงฐานข้อมูล',0,2,'2026-10-26','สูง','Development',7,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-11','ทดสอบระบบค้นหา',2,2,'2026-10-28','ต่ำ','Development',3,'{}');
+INSERT OR IGNORE INTO tasks(id,name,person,status,date,priority,project,hours,custom) VALUES('sample-12','เตรียมแคมเปญเปิดตัว',3,1,'2026-11-05','ปานกลาง','Marketing',5,'{}');

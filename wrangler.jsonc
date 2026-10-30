@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workly-dashboard",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "work-space",
+      "remote": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "workly-db",
+      "database_id": "fa6bf12f-5431-45df-987d-9f4f26a20324",
+      "migrations_dir": "db/migrations",
+      "remote": true
+    }
+  ],
+  "account_id": "4fc4b87495d2e07918970a2cea911b22",
+  "vars": {
+    "R2_PUBLIC_URL": "https://pub-b5e226259aa547e4ae9bdf7ffe3381f5.r2.dev"
+  }
+}
