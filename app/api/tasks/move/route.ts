@@ -42,6 +42,14 @@ export async function POST(request: Request) {
     let rows = (await read()).results;
     const task = rows.find((t) => t.id === id);
     if (!task) return Response.json({ error: "ไม่พบงาน" }, { status: 404 });
+    if (!task.parent_id && task.status === 2 && group !== "done")
+      return Response.json(
+        {
+          error:
+            "งานที่เสร็จแล้วอยู่ใน Completed กรุณาเปลี่ยนสถานะก่อนย้ายกลุ่ม",
+        },
+        { status: 400 },
+      );
     if (
       task.parent_id &&
       (task.group_id || (task.status === 2 ? "done" : "todo")) !== group

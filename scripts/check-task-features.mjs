@@ -938,6 +938,143 @@ try {
     "Unit Member, Renamed member",
   );
   assert.deepEqual(memberTask.custom[memberColumn.id], ["0", "4"]);
+  const completionParent = await createTask("Completion parent");
+  const completionChild = await createTask(
+    "Completion child",
+    completionParent.id,
+  );
+  const unfinishedChild = await createTask(
+    "Still working",
+    completionParent.id,
+  );
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", { ...completionChild, status: 2 }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).group_id, "todo");
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT status,group_id FROM tasks WHERE id=?")
+        .bind(completionParent.id)
+        .first()
+    ).group_id,
+    "todo",
+  );
+  await db
+    .prepare(
+      "UPDATE board_settings SET layout=json_set(layout,'$.hiddenGroups',json('[\"done\"]')) WHERE id=1",
+    )
+    .run();
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", { ...completionParent, status: 2 }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).group_id, "done");
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tasks WHERE parent_id=? AND group_id='done'",
+        )
+        .bind(completionParent.id)
+        .first()
+    ).count,
+    2,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT status FROM tasks WHERE id=?")
+        .bind(unfinishedChild.id)
+        .first()
+    ).status,
+    -1,
+  );
+  assert.ok(
+    !JSON.parse(
+      (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+        .layout,
+    ).hiddenGroups.includes("done"),
+  );
+  assert.equal(
+    (
+      await moveApi.POST(
+        req("/api/tasks/move", "POST", {
+          id: completionParent.id,
+          group: "todo",
+        }),
+      )
+    ).status,
+    400,
+  );
+  await bulk("archive", [completionParent.id]);
+  await db
+    .prepare("UPDATE tasks SET group_id='todo' WHERE id=?")
+    .bind(completionParent.id)
+    .run();
+  await bulk("restore", [completionParent.id]);
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT group_id FROM tasks WHERE id=?")
+        .bind(completionParent.id)
+        .first()
+    ).group_id,
+    "done",
+  );
+  response = await taskApi.POST(
+    req("/api/tasks", "POST", {
+      name: "Initially completed",
+      status: 2,
+      group_id: "todo",
+    }),
+  );
+  assert.equal(response.status, 201);
+  assert.equal((await response.json()).group_id, "done");
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", { ...completionParent, status: 1 }),
+  );
+  assert.equal((await response.json()).group_id, "done");
+  assert.equal(
+    (
+      await moveApi.POST(
+        req("/api/tasks/move", "POST", {
+          id: completionParent.id,
+          group: "todo",
+        }),
+      )
+    ).status,
+    200,
+  );
+  const completedLayout = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  completedLayout.overrides.status = {
+    id: "status",
+    name: "ความคืบหน้า",
+    type: "status",
+  };
+  assert.equal(
+    (await layoutApi.PUT(req("/api/table-layout", "PUT", completedLayout)))
+      .status,
+    200,
+  );
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", {
+      ...completionParent,
+      status: 1,
+      custom: { "view:status": "เสร็จแล้ว" },
+    }),
+  );
+  const visibleCompletion = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(visibleCompletion.status, 2);
+  assert.equal(visibleCompletion.group_id, "done");
+  console.log(
+    "PASS: automatic Completed placement on creation/edit/restore, visible status overrides, existing migration backfill, hidden group visibility, and parent/subtask integrity.",
+  );
   console.log(
     "PASS: registered-only Member columns, stable IDs with duplicate/renamed names, avatars, native assignees, and legacy conversion including archived tasks.",
   );

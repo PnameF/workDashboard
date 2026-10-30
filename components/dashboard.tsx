@@ -819,6 +819,10 @@ export default function Dashboard({
   async function update(t: Task) {
     await mutate(async () => {
       const updated = await api<Task>("/api/tasks", "PATCH", t);
+      if (!updated.parent_id && updated.status === 2) {
+        setData(await api<Workspace>("/api/workspace"));
+        return;
+      }
       setData((d) => ({
         ...d,
         tasks: d.tasks.map((x) => (x.id === t.id ? updated : x)),
@@ -2976,12 +2980,15 @@ export default function Dashboard({
                   editing ? "PATCH" : "POST",
                   body,
                 );
-                setData((d) => ({
-                  ...d,
-                  tasks: editing
-                    ? d.tasks.map((t) => (t.id === result.id ? result : t))
-                    : [...d.tasks, result],
-                }));
+                if (!result.parent_id && result.status === 2)
+                  setData(await api<Workspace>("/api/workspace"));
+                else
+                  setData((d) => ({
+                    ...d,
+                    tasks: editing
+                      ? d.tasks.map((t) => (t.id === result.id ? result : t))
+                      : [...d.tasks, result],
+                  }));
                 setModal(null);
                 toast("บันทึกงานเรียบร้อย");
               });

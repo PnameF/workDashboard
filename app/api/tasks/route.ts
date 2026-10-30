@@ -6,12 +6,17 @@ import type { Task } from "@/lib/types";
 import { validTimelines } from "@/lib/timeline-validation";
 import { taskTreeSql } from "@/lib/subtasks";
 import { validMemberColumns } from "@/lib/member-columns";
+import { defaultLayout, type BoardLayout } from "@/lib/board";
+import { syncTaskStatus } from "@/lib/task-status";
 async function enforceDeleted(db: Database, t: Task) {
   const settings = await db
     .prepare("SELECT layout FROM board_settings WHERE id=1")
     .first<{ layout: string }>();
-  if (settings)
-    Object.assign(t, applyDeletedColumns(t, JSON.parse(settings.layout)));
+  const layout: BoardLayout = settings
+    ? JSON.parse(settings.layout)
+    : defaultLayout;
+  Object.assign(t, applyDeletedColumns(t, layout));
+  syncTaskStatus(t, layout);
 }
 function valid(t: Task) {
   return (
@@ -138,7 +143,14 @@ export async function POST(request: Request) {
         t.parent_id,
       )
       .run();
-    return Response.json({ ...t, id, group_id: groupId }, { status: 201 });
+    const stored = await db
+      .prepare("SELECT group_id FROM tasks WHERE id=?")
+      .bind(id)
+      .first<{ group_id: string }>();
+    return Response.json(
+      { ...t, id, group_id: stored?.group_id || groupId },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("D1 create failed", error);
     return Response.json({ error: "บันทึกงานไม่สำเร็จ" }, { status: 500 });

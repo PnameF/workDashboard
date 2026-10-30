@@ -31,6 +31,12 @@ await read(
 );
 await read("SELECT parent_id,archived_parent_id FROM tasks WHERE 0");
 assert.ok(schema.migrations >= 22);
+assert.ok(schema.migrations >= 23);
+const [completion] = await read(
+  "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('task_children_follow_group','task_completed_insert','task_completed_update')) AS triggers,(SELECT COUNT(*) FROM tasks WHERE parent_id IS NULL AND status=2 AND archived_at IS NULL AND group_id IS NOT 'done') AS misplaced_completed",
+);
+assert.equal(completion.triggers, 3);
+assert.equal(completion.misplaced_completed, 0);
 const [memberSchema] = await read(
   "SELECT sql FROM sqlite_master WHERE type='table' AND name='custom_columns'",
 );
@@ -42,6 +48,7 @@ console.log(
     update_queries_valid: true,
     subtask_columns_valid: true,
     member_type_valid: true,
+    completed_group_valid: true,
     mode: "read-only",
   }),
 );
