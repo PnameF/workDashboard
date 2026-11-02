@@ -1,22 +1,51 @@
 import { applyDeletedColumns } from "@/lib/deleted-columns";
-import type { Database } from "@/lib/database";
-import { checkAccess, getSessionUser, validMembers } from "@/lib/auth";
+import type { Database, Statement } from "@/lib/database";
+import { checkAccess, getAuthorizedUser } from "@/lib/auth";
 import { getDb, getBucket } from "@/lib/db";
-import type { Task } from "@/lib/types";
+import type { Task, TaskSaveResult } from "@/lib/types";
 import { validTimelines } from "@/lib/timeline-validation";
 import { taskTreeSql } from "@/lib/subtasks";
 import { validMemberColumns } from "@/lib/member-columns";
-import { defaultLayout, type BoardLayout } from "@/lib/board";
-import { syncTaskStatus } from "@/lib/task-status";
-async function enforceDeleted(db: Database, t: Task) {
-  const settings = await db
-    .prepare("SELECT layout FROM board_settings WHERE id=1")
-    .first<{ layout: string }>();
-  const layout: BoardLayout = settings
-    ? JSON.parse(settings.layout)
-    : defaultLayout;
-  Object.assign(t, applyDeletedColumns(t, layout));
-  syncTaskStatus(t, layout);
+import { syncTaskStatus, validTaskStatuses } from "@/lib/task-status";
+import { loadTaskSchema, type TaskSchema } from "@/lib/task-schema";
+function enforceDeleted(t: Task, schema: TaskSchema) {
+  Object.assign(t, applyDeletedColumns(t, schema.layout));
+  syncTaskStatus(t, schema.layout);
+}
+async function saveAndRead(
+  db: Database,
+  statement: Statement,
+  id: string,
+): Promise<TaskSaveResult | null> {
+  const [write, rows, settings] = await db.batch([
+    statement,
+    db.prepare("SELECT * FROM tasks WHERE id=?").bind(id),
+    db
+      .prepare(
+        "SELECT layout FROM board_settings WHERE id=1 AND EXISTS(SELECT 1 FROM tasks WHERE id=? AND parent_id IS NULL AND status=2 AND archived_at IS NULL)",
+      )
+      .bind(id),
+  ]);
+  const saved = rows.results[0] as unknown as
+    | (Omit<Task, "custom" | "assignees"> & {
+        custom: string;
+        assignees: string;
+      })
+    | undefined;
+  if (!write.meta.changes || !saved) return null;
+  const assignees = JSON.parse(saved.assignees) as number[];
+  return {
+    ...saved,
+    custom: JSON.parse(saved.custom),
+    assignees: assignees.length
+      ? assignees
+      : saved.person >= 0
+        ? [saved.person]
+        : [],
+    ...(settings.results[0]
+      ? { layout: JSON.parse(String(settings.results[0].layout)) }
+      : {}),
+  };
 }
 function valid(t: Task) {
   return (
@@ -51,12 +80,12 @@ function valid(t: Task) {
   );
 }
 export async function POST(request: Request) {
-  const authError = await checkAccess(request);
-  if (authError) return authError;
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
 
   try {
     const t = (await request.json()) as Task;
-    t.created_by = (await getSessionUser())!.memberId;
+    t.created_by = user.memberId;
     t.assignees =
       t.assignees ??
       (Number.isInteger(t.person) && t.person >= 0 ? [t.person] : []);
@@ -78,35 +107,43 @@ export async function POST(request: Request) {
         { error: "ข้อมูลผู้สร้างไม่ถูกต้อง" },
         { status: 400 },
       );
-    if (!valid(t) || !(await validMembers(t.assignees)))
+    if (!valid(t))
       return Response.json(
         { error: "ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบชื่องาน วันที่ และชั่วโมง" },
         { status: 400 },
       );
     const id = crypto.randomUUID();
     const db = await getDb();
-    await enforceDeleted(db, t);
-    if (!(await validMemberColumns(db, t)))
+    t.parent_id ??= null;
+    if (
+      t.parent_id !== null &&
+      (typeof t.parent_id !== "string" || t.parent_id.length > 100)
+    )
+      return Response.json({ error: "งานแม่ไม่ถูกต้อง" }, { status: 400 });
+    const schema = await loadTaskSchema(db, t.parent_id);
+    if (t.assignees.some((id) => !schema.members.has(id)))
+      return Response.json({ error: "สมาชิกไม่ถูกต้อง" }, { status: 400 });
+    enforceDeleted(t, schema);
+    if (!validTaskStatuses(t, schema))
+      return Response.json(
+        { error: "สถานะถูกลบหรือเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลใหม่" },
+        { status: 400 },
+      );
+    if (!(await validMemberColumns(db, t, schema)))
       return Response.json(
         { error: "กรุณาเลือกสมาชิกจากบัญชีที่สมัครจริง ไม่เกิน 50 คนต่อช่อง" },
         { status: 400 },
       );
-    if (!(await validTimelines(db, t.custom)))
+    if (!(await validTimelines(db, t.custom, schema)))
       return Response.json(
         { error: "Timeline ต้องเป็นช่วงวันที่เริ่มต้น–สิ้นสุดที่ถูกต้อง" },
         { status: 400 },
       );
     let groupId = t.group_id ?? "todo";
-    t.parent_id ??= null;
     if (t.parent_id !== null) {
       if (typeof t.parent_id !== "string" || t.parent_id.length > 100)
         return Response.json({ error: "งานแม่ไม่ถูกต้อง" }, { status: 400 });
-      const parent = await db
-        .prepare(
-          "SELECT id,parent_id,group_id,status FROM tasks WHERE id=? AND archived_at IS NULL",
-        )
-        .bind(t.parent_id)
-        .first<Task>();
+      const parent = schema.parent;
       if (!parent || parent.parent_id)
         return Response.json(
           { error: "เลือกงานแม่ที่ยังใช้งานอยู่ งานย่อยซ้อนไม่ได้" },
@@ -116,41 +153,34 @@ export async function POST(request: Request) {
     }
     if (
       groupId !== null &&
-      (typeof groupId !== "string" ||
-        !(await db
-          .prepare("SELECT id FROM task_groups WHERE id=?")
-          .bind(groupId)
-          .first()))
+      (typeof groupId !== "string" || !schema.groups.has(groupId))
     )
       return Response.json({ error: "ไม่พบกลุ่ม" }, { status: 400 });
-    await db
-      .prepare(
-        "INSERT INTO tasks(id,name,person,status,date,priority,project,hours,custom,assignees,group_id,created_by,parent_id,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(COALESCE(sort_order,rowid*1024)),0)+1024 FROM tasks))",
-      )
-      .bind(
-        id,
-        t.name.trim(),
-        t.person,
-        t.status,
-        t.date,
-        t.priority,
-        t.project.trim(),
-        t.hours,
-        JSON.stringify(t.custom),
-        JSON.stringify(t.assignees),
-        groupId,
-        t.created_by ?? null,
-        t.parent_id,
-      )
-      .run();
-    const stored = await db
-      .prepare("SELECT group_id FROM tasks WHERE id=?")
-      .bind(id)
-      .first<{ group_id: string }>();
-    return Response.json(
-      { ...t, id, group_id: stored?.group_id || groupId },
-      { status: 201 },
+    const saved = await saveAndRead(
+      db,
+      db
+        .prepare(
+          "INSERT INTO tasks(id,name,person,status,date,priority,project,hours,custom,assignees,group_id,created_by,parent_id,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(COALESCE(sort_order,rowid*1024)),0)+1024 FROM tasks))",
+        )
+        .bind(
+          id,
+          t.name.trim(),
+          t.person,
+          t.status,
+          t.date,
+          t.priority,
+          t.project.trim(),
+          t.hours,
+          JSON.stringify(t.custom),
+          JSON.stringify(t.assignees),
+          groupId,
+          t.created_by ?? null,
+          t.parent_id,
+        ),
+      id,
     );
+    if (!saved) throw new Error("Created task not found");
+    return Response.json(saved, { status: 201 });
   } catch (error) {
     console.error("D1 create failed", error);
     return Response.json({ error: "บันทึกงานไม่สำเร็จ" }, { status: 500 });
@@ -183,63 +213,50 @@ export async function PATCH(request: Request) {
         { error: "ข้อมูลผู้สร้างไม่ถูกต้อง" },
         { status: 400 },
       );
-    if (
-      !valid(t) ||
-      !(await validMembers(t.assignees)) ||
-      typeof t.id !== "string"
-    )
+    if (!valid(t) || typeof t.id !== "string")
       return Response.json({ error: "ข้อมูลไม่ถูกต้อง" }, { status: 400 });
     const db = await getDb();
-    await enforceDeleted(db, t);
-    if (!(await validMemberColumns(db, t)))
+    const schema = await loadTaskSchema(db);
+    if (t.assignees.some((id) => !schema.members.has(id)))
+      return Response.json({ error: "สมาชิกไม่ถูกต้อง" }, { status: 400 });
+    enforceDeleted(t, schema);
+    if (!validTaskStatuses(t, schema))
+      return Response.json(
+        { error: "สถานะถูกลบหรือเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลใหม่" },
+        { status: 400 },
+      );
+    if (!(await validMemberColumns(db, t, schema)))
       return Response.json(
         { error: "กรุณาเลือกสมาชิกจากบัญชีที่สมัครจริง ไม่เกิน 50 คนต่อช่อง" },
         { status: 400 },
       );
-    if (!(await validTimelines(db, t.custom)))
+    if (!(await validTimelines(db, t.custom, schema)))
       return Response.json(
         { error: "Timeline ต้องเป็นช่วงวันที่เริ่มต้น–สิ้นสุดที่ถูกต้อง" },
         { status: 400 },
       );
-    const result = await db
-      .prepare(
-        "UPDATE tasks SET name=?,person=?,status=?,date=?,priority=?,project=?,hours=?,custom=?,assignees=?,group_id=COALESCE(group_id,CASE WHEN status=2 THEN 'done' ELSE 'todo' END) WHERE id=?",
-      )
-      .bind(
-        t.name.trim(),
-        t.person,
-        t.status,
-        t.date,
-        t.priority,
-        t.project.trim(),
-        t.hours,
-        JSON.stringify(t.custom),
-        JSON.stringify(t.assignees),
-        t.id,
-      )
-      .run();
-    if (!result.meta.changes)
-      return Response.json({ error: "ไม่พบงาน" }, { status: 404 });
-    const saved = await db
-      .prepare("SELECT * FROM tasks WHERE id=?")
-      .bind(t.id)
-      .first<
-        Omit<Task, "custom" | "assignees"> & {
-          custom: string;
-          assignees: string;
-        }
-      >();
+    const saved = await saveAndRead(
+      db,
+      db
+        .prepare(
+          "UPDATE tasks SET name=?,person=?,status=?,date=?,priority=?,project=?,hours=?,custom=?,assignees=?,group_id=COALESCE(group_id,CASE WHEN status=2 THEN 'done' ELSE 'todo' END) WHERE id=?",
+        )
+        .bind(
+          t.name.trim(),
+          t.person,
+          t.status,
+          t.date,
+          t.priority,
+          t.project.trim(),
+          t.hours,
+          JSON.stringify(t.custom),
+          JSON.stringify(t.assignees),
+          t.id,
+        ),
+      t.id,
+    );
     if (!saved) return Response.json({ error: "ไม่พบงาน" }, { status: 404 });
-    const assignees = JSON.parse(saved.assignees) as number[];
-    return Response.json({
-      ...saved,
-      custom: JSON.parse(saved.custom),
-      assignees: assignees.length
-        ? assignees
-        : saved.person >= 0
-          ? [saved.person]
-          : [],
-    });
+    return Response.json(saved);
   } catch (error) {
     console.error("D1 update failed", error);
     return Response.json({ error: "แก้ไขงานไม่สำเร็จ" }, { status: 500 });

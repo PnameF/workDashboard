@@ -16,7 +16,10 @@ import type { Task, CustomColumn, Attachment } from "@/lib/types";
 import type { BoardLayout } from "@/lib/board";
 import AppSelect from "./app-select";
 import CalendarDisplayMenu from "./calendar-display-menu";
-import { calendarColumns, calendarFieldValue } from "@/lib/calendar-display";
+import {
+  calendarDisplayOptions,
+  calendarFieldValue,
+} from "@/lib/calendar-display";
 import { timelineDefinitions, type CalendarMonth } from "@/lib/timeline-events";
 import TaskDetailsDrawer from "./task-details-drawer";
 import type { WorkGroup } from "@/lib/types";
@@ -72,7 +75,7 @@ export default function ReportCalendar({
     else setLocalColumn(next);
     setDetail(null);
   }
-  const displayOptions = calendarColumns(columns, layout),
+  const displayOptions = calendarDisplayOptions(columns, layout),
     selectedFields = (layout.calendarFields || ["name"]).filter((id) =>
       displayOptions.some((o) => o.id === id),
     ),
@@ -81,18 +84,20 @@ export default function ReportCalendar({
     eventHeight = 25;
   function labels(event: CalendarEvent) {
     const task = taskMap.get(event.taskId);
-    const values = displayFields.map((id) => ({
-      label: displayOptions.find((o) => o.id === id)?.name || id,
-      value: task
-        ? calendarFieldValue(task, id, columns, layout, people, attachments)
-        : "",
-    }));
+    const values = displayFields
+      .map((id) =>
+        task
+          ? calendarFieldValue(task, id, columns, layout, people, attachments, {
+              groups,
+              tasks: allTasks,
+            })
+          : "",
+      )
+      .map((value) => value.trim())
+      .filter((value) => value && !/^[—–-]+$/.test(value));
     return {
-      primary: values[0].value || `${values[0].label}: ไม่ระบุ`,
-      secondary: values
-        .slice(1)
-        .map((v) => v.value || "—")
-        .join(" | "),
+      primary: values[0] || event.name,
+      secondary: values.slice(1).join(" | "),
     };
   }
   const definitions = timelineDefinitions(columns, layout);

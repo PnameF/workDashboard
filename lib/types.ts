@@ -45,6 +45,7 @@ export type Attachment = {
   content_type: string;
   size: number;
 };
+export type TaskSaveResult = Task & { layout?: import("./board").BoardLayout };
 export type ArchivedTask = {
   parent_id?: string | null;
   parent_name?: string | null;

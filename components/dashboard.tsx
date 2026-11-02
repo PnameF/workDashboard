@@ -18,6 +18,15 @@ import SubtaskTable from "./subtask-table";
 import OptionEditor from "./option-editor";
 import { optionColor, optionPalette } from "@/lib/option-colors";
 import {
+  statusColor,
+  statusColors,
+  statusLabel,
+  statusPalette,
+  statusOptions,
+  statusValue,
+  statusCode,
+} from "@/lib/status-options";
+import {
   emptyTaskFilters,
   filterFields,
   matchesTaskFilters,
@@ -63,6 +72,7 @@ import {
 import {
   statuses,
   type Task,
+  type TaskSaveResult,
   type Workspace,
   type CustomColumn,
   type ColumnType,
@@ -73,6 +83,11 @@ import {
 import { nameInitials, type AuthUser } from "@/lib/auth-types";
 import { memberColor } from "@/lib/member-color";
 import { memberIds } from "@/lib/member-columns";
+import {
+  applyTaskSave,
+  optimisticTaskSave,
+  rollbackTaskSave,
+} from "@/lib/task-save";
 import { isSubtaskExpanded, subtaskRows } from "@/lib/subtasks";
 import { todayKey, parseDay, monthNames } from "@/lib/timeline";
 import {
@@ -82,7 +97,6 @@ import {
 
 const empty: Workspace = { tasks: [], columns: [], attachments: [] };
 const statusClasses = ["todo", "doing", "done", "stuck"];
-const colors = ["#71829c", "#d79722", "#18ac89", "#e15876"];
 type View = "my" | "board" | "reports" | "archive";
 const viewPaths: Record<View, string> = {
   my: "/my-work",
@@ -120,7 +134,6 @@ export default function Dashboard({
   const [collapsedGroups, setCollapsedGroups] = useState<
     Record<string, boolean>
   >({});
-  const groupColorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>({});
   const [activeFileColumn, setActiveFileColumn] = useState("images");
   const [previewFile, setPreviewFile] = useState<Attachment | null>(null);
@@ -180,6 +193,9 @@ export default function Dashboard({
   const [optionEdit, setOptionEdit] = useState<{
     columnId: string;
     value: string;
+    label: string;
+    creating?: boolean;
+    status?: boolean;
     color: string;
     onRename?: (next: string) => void;
   } | null>(null);
@@ -257,7 +273,6 @@ export default function Dashboard({
     return () => {
       active = false;
       if (toastTimer.current) clearTimeout(toastTimer.current);
-      if (groupColorTimer.current) clearTimeout(groupColorTimer.current);
     };
   }, [view]);
   useEffect(() => {
@@ -283,6 +298,10 @@ export default function Dashboard({
     }
   }
   const layout = data.layout || defaultLayout;
+  const nativeStatuses = statusOptions(layout, "status");
+  const colors = nativeStatuses.map((value) =>
+    statusColor(layout, "status", value),
+  );
   const [groupAction, setGroupAction] = useState<{
     id: string;
     action: "archive" | "delete";
@@ -428,10 +447,9 @@ export default function Dashboard({
     order.splice(order.indexOf(target) + (after ? 1 : 0), 0, id);
     void saveLayout({ ...layoutRef.current, groupOrder: order });
   }
-  function changeGroupColor(id: string, color: string) {
+  async function changeGroupColor(id: string, color: string) {
     setGroupDrafts((d) => ({ ...d, [id]: color }));
-    if (groupColorTimer.current) clearTimeout(groupColorTimer.current);
-    groupColorTimer.current = setTimeout(async () => {
+    try {
       await saveLayout({
         ...layoutRef.current,
         groupColors: {
@@ -440,8 +458,9 @@ export default function Dashboard({
           [id]: color,
         },
       });
+    } finally {
       setGroupDrafts({});
-    }, 450);
+    }
   }
   function moveColumn(id: string, offset: number) {
     const order = visibleColumns.map((c) => c.id);
@@ -480,10 +499,27 @@ export default function Dashboard({
     setOptionEdit({
       columnId,
       value,
+      status: columnTypeFor(columnId) === "status",
+      label:
+        columnTypeFor(columnId) === "status"
+          ? statusLabel(layout, columnId, value)
+          : value,
       color:
-        optionColor(layout.optionColors?.[columnId], value) ||
-        optionPalette[Math.max(0, options.indexOf(value)) % 6],
+        columnTypeFor(columnId) === "status"
+          ? statusColor(layout, columnId, value)
+          : optionColor(layout.optionColors?.[columnId], value) ||
+            optionPalette[Math.max(0, options.indexOf(value)) % 6],
       onRename,
+    });
+  }
+  function addStatus(columnId: string) {
+    setOptionEdit({
+      columnId,
+      value: "",
+      label: "",
+      color: "#3159a5",
+      creating: true,
+      status: true,
     });
   }
   function columnValue(t: Task, id: string): unknown {
@@ -493,7 +529,7 @@ export default function Dashboard({
     const values: Record<string, unknown> = {
       name: t.name,
       assignees: t.assignees.map((p) => people[p]).filter(Boolean),
-      status: t.status >= 0 ? statuses[t.status] : "",
+      status: statusValue(t),
       date: t.date,
       priority: t.priority,
       project: t.project,
@@ -569,6 +605,9 @@ export default function Dashboard({
           <CustomCell
             members={members}
             column={c}
+            statusLabels={layout.statusLabels?.[id]}
+            choices={statusOptions(layout, id)}
+            addStatus={() => addStatus(id)}
             colors={layout.optionColors?.[id]}
             editOption={(value) => editOption(id, value)}
             numberConfig={layout.numberSummaries?.[id]}
@@ -586,7 +625,7 @@ export default function Dashboard({
       const values: Record<string, string | boolean | string[]> = {
         name: t.name,
         assignees: t.assignees.map((p) => people[p]).filter(Boolean),
-        status: statuses[t.status] || "",
+        status: statusValue(t),
         date: t.date,
         priority: t.priority,
         project: t.project,
@@ -607,6 +646,9 @@ export default function Dashboard({
           <CustomCell
             members={members}
             colors={layout.optionColors?.[id]}
+            statusLabels={layout.statusLabels?.[id]}
+            choices={statusOptions(layout, id)}
+            addStatus={() => addStatus(id)}
             editOption={(value) => editOption(id, value)}
             editOptions={() => {
               setEditingColumn(c);
@@ -637,6 +679,7 @@ export default function Dashboard({
       case "assignees":
         return (
           <MultiChoice
+            avatarOnly
             avatarUrls={Object.fromEntries(
               members.map((m) => [String(m.id), m.avatarUrl]),
             )}
@@ -666,18 +709,22 @@ export default function Dashboard({
             disabled={busy}
             aria-label={`สถานะ ${t.name}`}
             className={`badge ${statusClasses[t.status]}`}
-            value={t.status}
+            colors={statusColors(layout, "status")}
+            onEditOption={(value) => editOption("status", value)}
+            onAddOption={() => addStatus("status")}
+            value={statusValue(t)}
             onChange={(value) =>
               update({
                 ...t,
-                status: Number(value),
+                status: statusCode(value),
+                custom: { ...t.custom, "view:status": value },
               })
             }
           >
-            <option value={-1}></option>
-            {statuses.map((v, i) => (
-              <option key={v} value={i}>
-                {v}
+            <option value=""></option>
+            {nativeStatuses.map((v) => (
+              <option key={v} value={v}>
+                {statusLabel(layout, "status", v)}
               </option>
             ))}
           </AppSelect>
@@ -817,25 +864,26 @@ export default function Dashboard({
     setModal("task");
   }
   async function update(t: Task) {
+    const before = data,
+      optimistic = optimisticTaskSave(before, t);
+    setData(optimistic);
     await mutate(async () => {
-      const updated = await api<Task>("/api/tasks", "PATCH", t);
-      if (!updated.parent_id && updated.status === 2) {
-        setData(await api<Workspace>("/api/workspace"));
-        return;
+      try {
+        const updated = await api<TaskSaveResult>("/api/tasks", "PATCH", t);
+        setData((current) => applyTaskSave(current, updated));
+      } catch (error) {
+        setData((current) => rollbackTaskSave(current, before, optimistic));
+        throw error;
       }
-      setData((d) => ({
-        ...d,
-        tasks: d.tasks.map((x) => (x.id === t.id ? updated : x)),
-      }));
     });
   }
   async function addSubtask(parent: Task, name: string) {
     return mutate(async () => {
-      const child = await api<Task>("/api/tasks", "POST", {
+      const child = await api<TaskSaveResult>("/api/tasks", "POST", {
         name,
         parent_id: parent.id,
       });
-      setData((current) => ({ ...current, tasks: [...current.tasks, child] }));
+      setData((current) => applyTaskSave(current, child));
       setCollapsedSubtasks((current) => ({ ...current, [parent.id]: false }));
     });
   }
@@ -843,7 +891,7 @@ export default function Dashboard({
     const name = quickTaskNames[groupId]?.trim();
     if (!name || busy) return;
     await mutate(async () => {
-      const task = await api<Task>("/api/tasks", "POST", {
+      const task = await api<TaskSaveResult>("/api/tasks", "POST", {
         name,
         created_by: currentUser,
         person: -1,
@@ -856,7 +904,7 @@ export default function Dashboard({
         custom: {},
         group_id: groupId,
       });
-      setData((d) => ({ ...d, tasks: [...d.tasks, task] }));
+      setData((current) => applyTaskSave(current, task));
       setQuickTaskNames((d) => ({ ...d, [groupId]: "" }));
     });
   }
@@ -883,19 +931,21 @@ export default function Dashboard({
   }
 
   let position = 0;
-  const gradient =
-    "conic-gradient(" +
-    [2, 1, 0, 3]
-      .map((i) => {
-        const start = position;
-        position +=
-          (list.filter((t) => t.status === i).length / (list.length || 1)) *
-          100;
-        return `${colors[i]} ${start}% ${position}%`;
-      })
-      .join(",") +
-    (list.length ? `,#343d4e ${position}% 100%` : ",#242c3a 0% 100%") +
-    ")";
+  const gradient = !nativeStatuses.length
+    ? "#343d4e"
+    : "conic-gradient(" +
+      nativeStatuses
+        .map((value, i) => {
+          const start = position;
+          position +=
+            (list.filter((t) => statusValue(t) === value).length /
+              (list.length || 1)) *
+            100;
+          return `${colors[i]} ${start}% ${position}%`;
+        })
+        .join(",") +
+      (list.length ? `,#343d4e ${position}% 100%` : ",#242c3a 0% 100%") +
+      ")";
   const max = Math.max(
     4,
     ...memberEntries.map(
@@ -1515,7 +1565,7 @@ export default function Dashboard({
                         </div>
                         <div className="statuslist">
                           <option value={-1}></option>
-                          {statuses.map((s, i) => (
+                          {nativeStatuses.map((s, i) => (
                             <div key={s} className="statusline">
                               <i
                                 className="dot"
@@ -1524,9 +1574,12 @@ export default function Dashboard({
                                   background: colors[i],
                                 }}
                               />
-                              {s}
+                              {statusLabel(layout, "status", s)}
                               <strong>
-                                {list.filter((t) => t.status === i).length}
+                                {
+                                  list.filter((t) => statusValue(t) === s)
+                                    .length
+                                }
                               </strong>
                             </div>
                           ))}
@@ -2542,6 +2595,17 @@ export default function Dashboard({
                                     {visibleColumns.map((c) => (
                                       <td key={c.id}>
                                         <ColumnFooter
+                                          statusOptions={statusOptions(
+                                            layout,
+                                            c.id,
+                                          )}
+                                          statusLabels={
+                                            layout.statusLabels?.[c.id]
+                                          }
+                                          statusColors={statusColors(
+                                            layout,
+                                            c.id,
+                                          )}
                                           label={
                                             layout.overrides[c.id]?.name ||
                                             c.name
@@ -2936,6 +3000,7 @@ export default function Dashboard({
             }
             onOpenTask={taskModal}
             onEditOption={editOption}
+            onAddStatus={addStatus}
             group={taskGroupInfo(
               editing || { group_id: newTaskGroup, status: newTaskStatus },
               data.groups || [],
@@ -2975,20 +3040,12 @@ export default function Dashboard({
             }
             onSave={(body) => {
               void mutate(async () => {
-                const result = await api<Task>(
+                const result = await api<TaskSaveResult>(
                   "/api/tasks",
                   editing ? "PATCH" : "POST",
                   body,
                 );
-                if (!result.parent_id && result.status === 2)
-                  setData(await api<Workspace>("/api/workspace"));
-                else
-                  setData((d) => ({
-                    ...d,
-                    tasks: editing
-                      ? d.tasks.map((t) => (t.id === result.id ? result : t))
-                      : [...d.tasks, result],
-                  }));
+                setData((current) => applyTaskSave(current, result));
                 setModal(null);
                 toast("บันทึกงานเรียบร้อย");
               });
@@ -3026,7 +3083,11 @@ export default function Dashboard({
                     },
                   },
                   async () => {
-                    setData(await api<Workspace>("/api/workspace"));
+                    if (
+                      columnType === "member" &&
+                      editingColumn.type !== "member"
+                    )
+                      setData(await api<Workspace>("/api/workspace"));
                     setModal(null);
                     toast("บันทึกคอลัมน์แล้ว");
                   },
@@ -3272,20 +3333,55 @@ export default function Dashboard({
       {optionEdit && (
         <OptionEditor
           key={`${optionEdit.columnId}:${optionEdit.value}`}
-          value={optionEdit.value}
+          value={optionEdit.label}
           color={optionEdit.color}
+          creating={optionEdit.creating}
+          onDelete={
+            optionEdit.status && !optionEdit.creating
+              ? async () => {
+                  await api("/api/options", "DELETE", {
+                    columnId: optionEdit.columnId,
+                    oldValue: optionEdit.value,
+                  });
+                  setData(await api<Workspace>("/api/workspace"));
+                  optionEdit.onRename?.("");
+                  const remove = (filter: TaskFilters["advanced"]) => ({
+                    ...filter,
+                    groups: filter.groups
+                      .map((group) => ({
+                        ...group,
+                        rules: group.rules.filter(
+                          (rule) =>
+                            rule.column !== optionEdit.columnId ||
+                            rule.value !== optionEdit.value,
+                        ),
+                      }))
+                      .filter((group) => group.rules.length),
+                  });
+                  setAdvanced((current) => ({
+                    advanced: remove(current.advanced),
+                    quick: remove(current.quick),
+                  }));
+                }
+              : undefined
+          }
           onCancel={() => setOptionEdit(null)}
           onSave={async (value, color) => {
-            await api("/api/options", "PATCH", {
-              columnId: optionEdit.columnId,
-              oldValue: optionEdit.value,
-              value,
-              color,
-            });
+            const saved = await api<{ value: string }>(
+              "/api/options",
+              optionEdit.creating ? "POST" : "PATCH",
+              {
+                columnId: optionEdit.columnId,
+                oldValue: optionEdit.value,
+                value,
+                color,
+              },
+            );
             const workspace = await api<Workspace>("/api/workspace");
             setData(workspace);
-            if (value !== optionEdit.value) {
-              optionEdit.onRename?.(value);
+            const nextValue = saved.value;
+            if (!optionEdit.creating && nextValue !== optionEdit.value) {
+              optionEdit.onRename?.(nextValue);
               const rename = (filter: TaskFilters["advanced"]) => ({
                 ...filter,
                 groups: filter.groups.map((group) => ({
@@ -3295,9 +3391,9 @@ export default function Dashboard({
                     rule.value === optionEdit.value
                       ? {
                           ...rule,
-                          value,
+                          value: nextValue,
                           id: rule.id.startsWith("quick:")
-                            ? `quick:${rule.column}:${value}`
+                            ? `quick:${rule.column}:${nextValue}`
                             : rule.id,
                         }
                       : rule,
@@ -3404,6 +3500,9 @@ function CustomCell({
   editOptions,
   numberConfig,
   colors,
+  statusLabels,
+  choices = statuses,
+  addStatus,
   editOption,
   members = [],
 }: {
@@ -3414,6 +3513,9 @@ function CustomCell({
   editOptions?: () => void;
   numberConfig?: NumberSummaryConfig;
   colors?: Record<string, string>;
+  statusLabels?: Record<string, string>;
+  choices?: string[];
+  addStatus?: () => void;
   editOption?: (value: string) => void;
   members?: NonNullable<Workspace["members"]>;
 }) {
@@ -3423,6 +3525,7 @@ function CustomCell({
   if (c.type === "member")
     return (
       <MultiChoice
+        avatarOnly
         label={c.name}
         options={members.map((m) => m.name)}
         optionValues={members.map((m) => String(m.id))}
@@ -3477,12 +3580,24 @@ function CustomCell({
         disabled={busy}
         aria-label={c.name}
         className={`badge ${statusClasses[statuses.indexOf(String(val))] || ""}`}
+        colors={Object.fromEntries(
+          choices.map((value) => [
+            value,
+            optionColor(colors, value) ||
+              statusPalette[statuses.indexOf(value)] ||
+              statusPalette[0],
+          ]),
+        )}
+        onEditOption={editOption}
+        onAddOption={addStatus}
         value={String(val)}
         onChange={(value) => set(value)}
       >
         <option value="">เลือกสถานะ</option>
-        {statuses.map((s) => (
-          <option key={s}>{s}</option>
+        {choices.map((s) => (
+          <option key={s} value={s}>
+            {statusLabels?.[s] || s}
+          </option>
         ))}
       </AppSelect>
     );

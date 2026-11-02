@@ -1,6 +1,7 @@
 import type { Database } from "./database";
 import { defaultLayout, type BoardLayout } from "./board";
 import type { CustomColumn, Task } from "./types";
+import type { TaskSchema } from "./task-schema";
 
 export function memberIds(value: unknown, people?: string[]): string[] {
   return Array.isArray(value)
@@ -18,7 +19,18 @@ export function memberIds(value: unknown, people?: string[]): string[] {
     : [];
 }
 
-export async function validMemberColumns(db: Database, task: Task) {
+export async function validMemberColumns(
+  db: Database,
+  task: Task,
+  schema?: TaskSchema,
+) {
+  if (schema)
+    return validateMemberValues(
+      task,
+      schema.layout,
+      schema.columns,
+      schema.registeredMembers,
+    );
   const settings = await db
     .prepare("SELECT layout FROM board_settings WHERE id=1")
     .first<{ layout: string }>();
@@ -28,6 +40,26 @@ export async function validMemberColumns(db: Database, task: Task) {
   const { results: columns } = await db
     .prepare("SELECT id,type FROM custom_columns")
     .all<Pick<CustomColumn, "id" | "type">>();
+  const members = (
+    await db
+      .prepare(
+        "SELECT m.id FROM members m JOIN auth_users u ON u.id=m.user_id WHERE u.role<>'admin'",
+      )
+      .all<{ id: number }>()
+  ).results;
+  return validateMemberValues(
+    task,
+    layout,
+    columns,
+    new Set(members.map((m) => String(m.id))),
+  );
+}
+function validateMemberValues(
+  task: Task,
+  layout: BoardLayout,
+  columns: Pick<CustomColumn, "id" | "type">[],
+  allowed: Set<string>,
+) {
   const ids = [
     ...new Set([...columns.map((c) => c.id), ...Object.keys(layout.overrides)]),
   ];
@@ -41,14 +73,6 @@ export async function validMemberColumns(db: Database, task: Task) {
     )
     .map((id) => (columns.some((c) => c.id === id) ? id : "view:" + id));
   if (!keys.length) return true;
-  const members = (
-    await db
-      .prepare(
-        "SELECT m.id FROM members m JOIN auth_users u ON u.id=m.user_id WHERE u.role<>'admin'",
-      )
-      .all<{ id: number }>()
-  ).results;
-  const allowed = new Set(members.map((m) => String(m.id)));
   for (const key of keys) {
     const raw = task.custom[key];
     if (raw === undefined) continue;

@@ -9,6 +9,7 @@ const child = spawn(python, ["scripts/sqlite-unit-worker.py"], {
     env: { ...process.env, PYTHONIOENCODING: "utf-8" },
   }),
   pending = new Map();
+let roundTrips = 0;
 let seq = 0,
   readyResolve;
 const ready = new Promise((resolve) => (readyResolve = resolve));
@@ -30,6 +31,7 @@ child.on("exit", (code) => {
     item.reject(Error(stderr || "SQLite worker exited " + code));
 });
 function queries(queries, batch = false) {
+  roundTrips++;
   return new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
@@ -95,7 +97,7 @@ async function module(file, stub = false) {
               }));
               b.onLoad({ filter: /.*/, namespace: "unit" }, (args) => ({
                 contents: args.path.endsWith("/auth")
-                  ? `export async function checkAccess(){return globalThis.unitUser?null:Response.json({error:'Unauthorized'},{status:401});}export async function getSessionUser(){return globalThis.unitUser;}export async function rateLimit(){return true;}export async function validMembers(){return true;}`
+                  ? `export async function checkAccess(){return globalThis.unitUser?null:Response.json({error:'Unauthorized'},{status:401});}export async function getAuthorizedUser(){return globalThis.unitUser||Response.json({error:'Unauthorized'},{status:401});}export async function getSessionUser(){return globalThis.unitUser;}export async function rateLimit(){return true;}export async function validMembers(){return true;}`
                   : `export async function getDb(){return globalThis.unitDb;}export async function getBucket(){return globalThis.unitBucket;}export async function getPublicFileUrl(id){return 'https://assets.example.test/'+id;}`,
               }));
             },
@@ -1072,6 +1074,538 @@ try {
   assert.equal(response.status, 200);
   assert.equal(visibleCompletion.status, 2);
   assert.equal(visibleCompletion.group_id, "done");
+  const calendarLayout = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  calendarLayout.calendarFields = ["meta:group", "meta:parent", "name"];
+  response = await layoutApi.PUT(
+    req("/api/table-layout", "PUT", calendarLayout),
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual((await response.json()).calendarFields, [
+    "meta:group",
+    "meta:parent",
+    "name",
+  ]);
+  const calendarReloaded = await (await workspaceApi.GET()).json();
+  assert.deepEqual(calendarReloaded.layout.calendarFields, [
+    "meta:group",
+    "meta:parent",
+    "name",
+  ]);
+  assert.deepEqual(
+    helpers.withoutColumn(calendarReloaded.layout, "name").calendarFields,
+    ["meta:group", "meta:parent"],
+  );
+  assert.equal(
+    (
+      await layoutApi.PUT(
+        req("/api/table-layout", "PUT", {
+          ...calendarLayout,
+          order: [...calendarLayout.order, "meta:group"],
+        }),
+      )
+    ).status,
+    400,
+  );
+  response = await columns.POST(
+    req("/api/columns", "POST", {
+      name: "Performance Timeline",
+      type: "timeline",
+    }),
+  );
+  const performanceTimeline = await response.json();
+  const performanceBody = {
+    name: "Fast save",
+    assignees: [0],
+    custom: {
+      [memberColumn.id]: ["4"],
+      [performanceTimeline.id]: ["2026-11-01", "2026-11-02"],
+    },
+  };
+  let beforeRequests = roundTrips;
+  response = await taskApi.POST(req("/api/tasks", "POST", performanceBody));
+  assert.equal(response.status, 201, await response.clone().text());
+  assert.equal(
+    roundTrips - beforeRequests,
+    2,
+    "Create should use one schema read and one write/read batch",
+  );
+  const performanceTask = await response.json();
+  beforeRequests = roundTrips;
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", { ...performanceTask, status: 2 }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(
+    roundTrips - beforeRequests,
+    2,
+    "Update must not reload validation metadata",
+  );
+  const fastSave = await response.json();
+  assert.equal(fastSave.group_id, "done");
+  assert.ok(
+    fastSave.layout,
+    "Completed saves must return the final group visibility without another workspace fetch",
+  );
+  beforeRequests = roundTrips;
+  const fastWorkspace = await workspaceApi.GET();
+  assert.equal(fastWorkspace.status, 200);
+  assert.equal(
+    roundTrips - beforeRequests,
+    1,
+    "Workspace should load in one batch",
+  );
+  const saveHelpers = await module("lib/task-save.ts");
+  const firstRoot = {
+    ...performanceTask,
+    id: "ui-parent",
+    status: 1,
+    group_id: "todo",
+    parent_id: null,
+  };
+  const uiChild = {
+    ...performanceTask,
+    id: "ui-child",
+    parent_id: firstRoot.id,
+    status: 1,
+    group_id: "todo",
+  };
+  const otherRoot = { ...firstRoot, id: "other-root", name: "Other" };
+  const uiWorkspace = {
+    tasks: [firstRoot, uiChild, otherRoot],
+    columns: [],
+    attachments: [],
+    layout: { order: [], hidden: [], overrides: {}, hiddenGroups: ["done"] },
+  };
+  const optimisticWorkspace = saveHelpers.optimisticTaskSave(uiWorkspace, {
+    ...firstRoot,
+    status: 2,
+  });
+  assert.equal(
+    optimisticWorkspace.tasks.find((t) => t.id === uiChild.id).group_id,
+    "done",
+  );
+  assert.equal(
+    optimisticWorkspace.tasks.find((t) => t.id === uiChild.id).status,
+    1,
+  );
+  assert.ok(!optimisticWorkspace.layout.hiddenGroups.includes("done"));
+  const newerOther = { ...otherRoot, name: "Newer unrelated edit" };
+  const rolledBack = saveHelpers.rollbackTaskSave(
+    {
+      ...optimisticWorkspace,
+      tasks: optimisticWorkspace.tasks.map((t) =>
+        t.id === otherRoot.id ? newerOther : t,
+      ),
+    },
+    uiWorkspace,
+    optimisticWorkspace,
+  );
+  assert.equal(rolledBack.tasks.find((t) => t.id === firstRoot.id).status, 1);
+  assert.equal(
+    rolledBack.tasks.find((t) => t.id === uiChild.id).group_id,
+    "todo",
+  );
+  assert.deepEqual(
+    rolledBack.tasks.map((t) => t.id),
+    uiWorkspace.tasks.map((t) => t.id),
+  );
+  assert.equal(
+    rolledBack.tasks.find((t) => t.id === otherRoot.id).name,
+    newerOther.name,
+  );
+  const appliedSave = saveHelpers.applyTaskSave(uiWorkspace, {
+    ...firstRoot,
+    status: 2,
+    group_id: "done",
+    layout: optimisticWorkspace.layout,
+  });
+  assert.equal(
+    appliedSave.tasks.find((t) => t.id === firstRoot.id).layout,
+    undefined,
+    "Save metadata must not be posted back as part of the next task",
+  );
+  assert.equal(
+    appliedSave.tasks.find((t) => t.id === uiChild.id).group_id,
+    "done",
+  );
+  console.log(
+    "PASS: saves use two database round trips (excluding auth), workspace uses one batch, immediate UI completion, and failure rollback preserves unrelated edits.",
+  );
+  const statusHelpers = await module("lib/status-options.ts");
+  const beforeStatusEdit = (
+    await db
+      .prepare("SELECT id,status,custom,group_id FROM tasks ORDER BY id")
+      .all()
+  ).results;
+  response = await options.PATCH(
+    req("/api/options", "PATCH", {
+      columnId: "status",
+      oldValue: "เสร็จแล้ว",
+      value: "สำเร็จ",
+      color: "#28c987",
+    }),
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  const statusSaved = await response.json();
+  assert.equal(
+    statusSaved.value,
+    "เสร็จแล้ว",
+    "A label edit must retain the canonical status value",
+  );
+  assert.equal(statusSaved.layout.statusLabels.status["เสร็จแล้ว"], "สำเร็จ");
+  assert.equal(statusSaved.layout.optionColors.status["เสร็จแล้ว"], "#28c987");
+  assert.deepEqual(
+    (
+      await db
+        .prepare("SELECT id,status,custom,group_id FROM tasks ORDER BY id")
+        .all()
+    ).results,
+    beforeStatusEdit,
+  );
+  assert.equal(
+    statusHelpers.statusColors(statusSaved.layout, "status")["เสร็จแล้ว"],
+    "#28c987",
+  );
+  for (const body of [
+    { oldValue: "กำลังทำ", value: "สำเร็จ", color: "#123456" },
+    { oldValue: "เสร็จแล้ว", value: "", color: "#123456" },
+    { oldValue: "เสร็จแล้ว", value: "สำเร็จ", color: "bad" },
+    { oldValue: "unknown", value: "สำเร็จ", color: "#123456" },
+  ])
+    assert.ok(
+      (
+        await options.PATCH(
+          req("/api/options", "PATCH", { columnId: "status", ...body }),
+        )
+      ).status >= 400,
+    );
+  response = await taskApi.POST(
+    req("/api/tasks", "POST", {
+      name: "Renamed completed status",
+      status: 2,
+      group_id: "todo",
+      custom: { "view:status": "เสร็จแล้ว" },
+    }),
+  );
+  assert.equal(response.status, 201, await response.clone().text());
+  const renamedDoneTask = await response.json();
+  assert.equal(renamedDoneTask.status, 2);
+  assert.equal(renamedDoneTask.group_id, "done");
+  response = await columns.POST(
+    req("/api/columns", "POST", { name: "Review", type: "status" }),
+  );
+  assert.equal(response.status, 201);
+  const customStatus = await response.json();
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", {
+      ...renamedDoneTask,
+      custom: { ...renamedDoneTask.custom, [customStatus.id]: "เสร็จแล้ว" },
+    }),
+  );
+  assert.equal(response.status, 200);
+  response = await options.PATCH(
+    req("/api/options", "PATCH", {
+      columnId: customStatus.id,
+      oldValue: "เสร็จแล้ว",
+      value: "ผ่านตรวจสอบ",
+      color: "#a554ed",
+    }),
+  );
+  assert.equal(response.status, 200);
+  const customStatusSaved = await response.json();
+  assert.equal(
+    statusHelpers.statusLabel(
+      customStatusSaved.layout,
+      customStatus.id,
+      "เสร็จแล้ว",
+    ),
+    "ผ่านตรวจสอบ",
+  );
+  assert.equal(
+    statusHelpers.statusLabel(customStatusSaved.layout, "status", "เสร็จแล้ว"),
+    "สำเร็จ",
+  );
+  assert.equal(
+    JSON.parse(
+      (
+        await db
+          .prepare("SELECT custom FROM tasks WHERE id=?")
+          .bind(renamedDoneTask.id)
+          .first()
+      ).custom,
+    )[customStatus.id],
+    "เสร็จแล้ว",
+  );
+  assert.equal(
+    (
+      await layoutApi.PUT(
+        req("/api/table-layout", "PUT", customStatusSaved.layout),
+      )
+    ).status,
+    200,
+  );
+  const statusReloaded = await (await workspaceApi.GET()).json();
+  assert.equal(
+    statusReloaded.layout.statusLabels.status["เสร็จแล้ว"],
+    "สำเร็จ",
+  );
+  assert.equal(
+    (
+      await layoutApi.PUT(
+        req("/api/table-layout", "PUT", {
+          ...customStatusSaved.layout,
+          statusLabels: { status: { กำลังทำ: "เสร็จแล้ว" } },
+        }),
+      )
+    ).status,
+    400,
+    "Duplicate display labels must be rejected by layout updates too",
+  );
+  response = await columns.DELETE(
+    req("/api/columns", "DELETE", { id: customStatus.id }),
+  );
+  assert.equal(response.status, 200);
+  const afterStatusDelete = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  assert.equal(afterStatusDelete.statusLabels[customStatus.id], undefined);
+  assert.equal(afterStatusDelete.statusLabels.status["เสร็จแล้ว"], "สำเร็จ");
+  assert.equal(
+    (
+      await options.PATCH(
+        req("/api/options", "PATCH", {
+          columnId: customStatus.id,
+          oldValue: "เสร็จแล้ว",
+          value: "Deleted",
+          color: "#123456",
+        }),
+      )
+    ).status,
+    404,
+  );
+  console.log(
+    "PASS: editable status names/colors persist independently per column, leave stored values and filters stable, preserve automatic Completed placement, reject invalid edits, and clean up deleted columns.",
+  );
+  const dynamicLayout = JSON.parse(
+    (await db.prepare("SELECT layout FROM board_settings WHERE id=1").first())
+      .layout,
+  );
+  delete dynamicLayout.overrides.status;
+  assert.equal(
+    (await layoutApi.PUT(req("/api/table-layout", "PUT", dynamicLayout)))
+      .status,
+    200,
+  );
+  response = await options.POST(
+    req("/api/options", "POST", {
+      columnId: "status",
+      value: "รอตรวจ",
+      color: "#9867ee",
+    }),
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  const addedStatus = await response.json(),
+    extraStatus = addedStatus.value;
+  assert.match(extraStatus, /^status:/);
+  assert.ok(addedStatus.layout.statusOptions.status.includes(extraStatus));
+  assert.equal(
+    (
+      await options.POST(
+        req("/api/options", "POST", {
+          columnId: "status",
+          value: "รอตรวจ",
+          color: "#9867ee",
+        }),
+      )
+    ).status,
+    409,
+  );
+  response = await taskApi.POST(
+    req("/api/tasks", "POST", {
+      name: "Dynamic status parent",
+      custom: { "view:status": extraStatus },
+    }),
+  );
+  assert.equal(response.status, 201, await response.clone().text());
+  const dynamicTask = await response.json();
+  assert.equal(dynamicTask.status, 0);
+  assert.equal(dynamicTask.group_id, "todo");
+  response = await taskApi.POST(
+    req("/api/tasks", "POST", {
+      name: "Dynamic status child",
+      parent_id: dynamicTask.id,
+      custom: { "view:status": extraStatus },
+    }),
+  );
+  assert.equal(response.status, 201);
+  const dynamicChild = await response.json();
+  response = await taskApi.POST(
+    req("/api/tasks", "POST", { name: "Different status", status: 0 }),
+  );
+  const otherStatusTask = await response.json();
+  response = await options.PATCH(
+    req("/api/options", "PATCH", {
+      columnId: "status",
+      oldValue: extraStatus,
+      value: "รออนุมัติ",
+      color: "#aa78ef",
+    }),
+  );
+  assert.equal(response.status, 200);
+  const renamedExtra = await response.json();
+  assert.equal(renamedExtra.value, extraStatus);
+  assert.equal(
+    statusHelpers.statusLabel(renamedExtra.layout, "status", extraStatus),
+    "รออนุมัติ",
+  );
+  const editorHelpers = await module("lib/task-editor.ts");
+  const nativeStatusField = editorHelpers
+    .editorFields([], renamedExtra.layout)
+    .find((field) => field.id === "status");
+  assert.equal(
+    editorHelpers.editorValue(dynamicTask, nativeStatusField, []),
+    extraStatus,
+  );
+  assert.equal(
+    editorHelpers.setEditorValue(dynamicTask, nativeStatusField, extraStatus)
+      .custom["view:status"],
+    extraStatus,
+  );
+  await bulk("archive", [dynamicChild.id]);
+  response = await options.DELETE(
+    req("/api/options", "DELETE", {
+      columnId: "status",
+      oldValue: extraStatus,
+    }),
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  const deletedExtra = await response.json();
+  assert.ok(!deletedExtra.layout.statusOptions.status.includes(extraStatus));
+  assert.equal(deletedExtra.layout.statusLabels.status[extraStatus], undefined);
+  for (const id of [dynamicTask.id, dynamicChild.id]) {
+    const row = await db
+      .prepare("SELECT status,custom FROM tasks WHERE id=?")
+      .bind(id)
+      .first();
+    assert.equal(row.status, -1);
+    assert.equal(JSON.parse(row.custom)["view:status"], undefined);
+  }
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT status FROM tasks WHERE id=?")
+        .bind(otherStatusTask.id)
+        .first()
+    ).status,
+    0,
+  );
+  assert.equal(
+    (await taskApi.PATCH(req("/api/tasks", "PATCH", dynamicTask))).status,
+    400,
+    "A stale task must not resurrect a deleted choice",
+  );
+  assert.equal(
+    (
+      await options.DELETE(
+        req("/api/options", "DELETE", {
+          columnId: "status",
+          oldValue: extraStatus,
+        }),
+      )
+    ).status,
+    409,
+  );
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", {
+      ...dynamicTask,
+      custom: { "view:status": "เสร็จแล้ว" },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).group_id, "done");
+  response = await columns.POST(
+    req("/api/columns", "POST", { name: "Dynamic review", type: "status" }),
+  );
+  const dynamicColumn = await response.json();
+  response = await options.POST(
+    req("/api/options", "POST", {
+      columnId: dynamicColumn.id,
+      value: "ส่งตรวจแล้ว",
+      color: "#2398af",
+    }),
+  );
+  assert.equal(response.status, 200);
+  const customExtra = await response.json();
+  response = await taskApi.PATCH(
+    req("/api/tasks", "PATCH", {
+      ...otherStatusTask,
+      custom: { [dynamicColumn.id]: customExtra.value },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(
+    (
+      await options.DELETE(
+        req("/api/options", "DELETE", {
+          columnId: dynamicColumn.id,
+          oldValue: customExtra.value,
+        }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    JSON.parse(
+      (
+        await db
+          .prepare("SELECT custom FROM tasks WHERE id=?")
+          .bind(otherStatusTask.id)
+          .first()
+      ).custom,
+    )[dynamicColumn.id],
+    undefined,
+  );
+  for (const value of ["ยังไม่เริ่ม", "กำลังทำ", "เสร็จแล้ว", "ติดปัญหา"]) {
+    assert.equal(
+      (
+        await options.DELETE(
+          req("/api/options", "DELETE", {
+            columnId: dynamicColumn.id,
+            oldValue: value,
+          }),
+        )
+      ).status,
+      200,
+    );
+  }
+  const emptyStatuses = (await (await workspaceApi.GET()).json()).layout;
+  assert.deepEqual(
+    statusHelpers.statusOptions(emptyStatuses, dynamicColumn.id),
+    [],
+  );
+  response = await options.POST(
+    req("/api/options", "POST", {
+      columnId: dynamicColumn.id,
+      value: "เสร็จแล้ว",
+      color: "#18ac89",
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(
+    (await response.json()).value,
+    "เสร็จแล้ว",
+    "Recreating a default state keeps its completion meaning",
+  );
+  console.log(
+    "PASS: add/rename/delete statuses on native and custom columns, task/subtask persistence, archived cleanup without deleting tasks, stale-write rejection, independent columns, empty lists, and existing completion automation.",
+  );
+  console.log(
+    "PASS: calendar group/parent display settings persist and reload without allowing virtual fields as table columns.",
+  );
   console.log(
     "PASS: automatic Completed placement on creation/edit/restore, visible status overrides, existing migration backfill, hidden group visibility, and parent/subtask integrity.",
   );

@@ -1,19 +1,18 @@
-import { checkAccess, getSessionUser } from "@/lib/auth";
+import { getAuthorizedUser, getSessionUser } from "@/lib/auth";
 import { getDb, getBucket, getPublicFileUrl } from "@/lib/db";
 import { normalizePreferences } from "@/lib/preferences";
 export async function GET(request: Request) {
-  const denied = await checkAccess(request);
-  if (denied) return denied;
-  return Response.json(await getSessionUser(), {
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
+  return Response.json(user, {
     headers: { "Cache-Control": "no-store" },
   });
 }
 export async function PATCH(request: Request) {
-  const denied = await checkAccess(request);
-  if (denied) return denied;
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
   try {
-    const user = (await getSessionUser())!,
-      body = await request.json(),
+    const body = await request.json(),
       db = await getDb();
     if (body.section === "profile") {
       if (
@@ -60,11 +59,10 @@ export async function PATCH(request: Request) {
   }
 }
 export async function POST(request: Request) {
-  const denied = await checkAccess(request);
-  if (denied) return denied;
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
   try {
-    const user = (await getSessionUser())!,
-      form = await request.formData(),
+    const form = await request.formData(),
       file = form.get("file");
     if (
       !(file instanceof File) ||
@@ -124,11 +122,10 @@ export async function POST(request: Request) {
   }
 }
 export async function DELETE(request: Request) {
-  const denied = await checkAccess(request);
-  if (denied) return denied;
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
   try {
-    const user = (await getSessionUser())!,
-      db = await getDb(),
+    const db = await getDb(),
       previous = await db
         .prepare("SELECT avatar_id FROM auth_users WHERE id=?")
         .bind(user.id)

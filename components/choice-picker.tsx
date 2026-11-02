@@ -11,6 +11,7 @@ type Props = {
   disabled: boolean;
   required?: boolean;
   avatars?: boolean;
+  avatarOnly?: boolean;
   single?: boolean;
   onChange: (values: string[]) => void;
   onEditOptions?: () => void;
@@ -26,6 +27,7 @@ export default function MultiChoice({
   disabled,
   required = false,
   avatars = false,
+  avatarOnly = false,
   single = false,
   onChange,
   onEditOptions,
@@ -123,7 +125,18 @@ export default function MultiChoice({
       >
         <span className="multi-tags">
           {selected.length ? (
-            selected.map((v) => chip(v))
+            avatars && avatarOnly ? (
+              selected.map((value) => (
+                <MemberAvatar
+                  key={value}
+                  id={value}
+                  name={options[values.indexOf(value)] || value}
+                  url={avatarUrls?.[value]}
+                />
+              ))
+            ) : (
+              selected.map((v) => chip(v))
+            )
           ) : (
             <span className="choice-placeholder">＋</span>
           )}

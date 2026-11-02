@@ -1,12 +1,8 @@
 import { boardColumns, type BoardLayout } from "./board";
-import {
-  statuses,
-  type Task,
-  type CustomColumn,
-  type Attachment,
-} from "./types";
+import { type Task, type CustomColumn, type Attachment } from "./types";
 import { parseDay, parseRange } from "./timeline";
 import { memberIds } from "./member-columns";
+import { statusLabel, statusOptions, statusValue } from "./status-options";
 export type FilterRule = {
   id: string;
   column: string;
@@ -73,7 +69,7 @@ export function filterRaw(
   const base: Record<string, unknown> = {
     name: task.name,
     assignees: task.assignees.filter((id) => context.people[id]).map(String),
-    status: statuses[task.status] || "",
+    status: statusValue(task),
     date: task.date,
     priority: task.priority,
     project: task.project,
@@ -114,7 +110,10 @@ export function filterFields(
         name ? [{ value: String(id), label: name }] : [],
       );
     else if (type === "status")
-      field.options = statuses.map((label) => ({ value: label, label }));
+      field.options = statusOptions(context.layout, id).map((value) => ({
+        value,
+        label: statusLabel(context.layout, id, value),
+      }));
     else if (type === "checkbox")
       field.options = [
         { value: "true", label: "เลือกแล้ว" },

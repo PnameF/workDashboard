@@ -1,4 +1,4 @@
-import { checkAccess, getSessionUser } from "@/lib/auth";
+import { checkAccess, getAuthorizedUser } from "@/lib/auth";
 import { getDb, getBucket, getPublicFileUrl } from "@/lib/db";
 import type { Task, Attachment, ArchivedTask } from "@/lib/types";
 type Row = Omit<Task, "custom" | "assignees"> & {
@@ -28,14 +28,14 @@ export async function GET() {
   }
 }
 export async function POST(request: Request) {
-  const authError = await checkAccess(request);
-  if (authError) return authError;
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return user;
 
   try {
     const body = await request.json();
     const action = body.action;
     let ids = body.ids;
-    const createdBy = (await getSessionUser())!.memberId;
+    const createdBy = user.memberId;
     if (
       !["archive", "restore", "duplicate"].includes(action) ||
       !Array.isArray(ids) ||

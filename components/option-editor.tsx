@@ -1,23 +1,28 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { FiX, FiEdit2 } from "react-icons/fi";
+import { FiX, FiEdit2, FiTrash2 } from "react-icons/fi";
 import ColorPicker from "./color-picker";
 export default function OptionEditor({
   value,
   color,
   onCancel,
   onSave,
+  onDelete,
+  creating = false,
 }: {
   value: string;
   color: string;
   onCancel: () => void;
   onSave: (name: string, color: string) => Promise<void>;
+  onDelete?: () => Promise<void>;
+  creating?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
     [name, setName] = useState(value),
     [draftColor, setColor] = useState(color),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
@@ -55,7 +60,7 @@ export default function OptionEditor({
         <header>
           <h2>
             <FiEdit2 />
-            แก้ไขตัวเลือก
+            {creating ? "เพิ่มสถานะ" : "แก้ไขตัวเลือก"}
           </h2>
           <button
             type="button"
@@ -88,6 +93,51 @@ export default function OptionEditor({
           </span>
         </div>
         {error && <p role="alert">{error}</p>}
+        {onDelete && (
+          <div className="option-delete-section">
+            {confirmDelete && (
+              <p>
+                ลบสถานะนี้? งานที่ใช้สถานะนี้จะถูกล้างสถานะ รวมงานที่เก็บถาวร
+                โดยไม่ลบงาน
+              </p>
+            )}
+            <button
+              type="button"
+              className="option-delete-button"
+              disabled={busy}
+              onClick={async () => {
+                if (!confirmDelete) {
+                  setConfirmDelete(true);
+                  return;
+                }
+                setBusy(true);
+                setError("");
+                try {
+                  await onDelete();
+                  close();
+                } catch (error) {
+                  setError(
+                    error instanceof Error ? error.message : "ลบสถานะไม่สำเร็จ",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <FiTrash2 />
+              {confirmDelete ? "ยืนยันลบสถานะ" : "ลบสถานะ"}
+            </button>
+            {confirmDelete && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmDelete(false)}
+              >
+                กลับ
+              </button>
+            )}
+          </div>
+        )}
         <footer>
           <button type="button" disabled={busy} onClick={close}>
             ยกเลิก

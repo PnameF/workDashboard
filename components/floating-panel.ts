@@ -1,6 +1,12 @@
 "use client";
 import { useEffect, useRef, useState, type ToggleEvent } from "react";
-export function useFloatingPanel(width: number) {
+export function useFloatingPanel(
+  width: number,
+  {
+    closeOnScroll = true,
+    closeOnResize = true,
+  }: { closeOnScroll?: boolean; closeOnResize?: boolean } = {},
+) {
   const popup = useRef<HTMLDivElement>(null),
     [open, setOpen] = useState(false),
     [position, setPosition] = useState<{
@@ -10,18 +16,27 @@ export function useFloatingPanel(width: number) {
     }>({ left: 0, top: 0, width });
   useEffect(() => {
     if (!open) return;
+    const viewportWidth = window.innerWidth,
+      viewportHeight = window.innerHeight;
     const close = (event: Event) => {
       if (event.target instanceof Node && popup.current?.contains(event.target))
         return;
       popup.current?.hidePopover();
     };
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    const resize = () => {
+      if (
+        window.innerWidth !== viewportWidth ||
+        window.innerHeight !== viewportHeight
+      )
+        popup.current?.hidePopover();
+    };
+    if (closeOnResize) window.addEventListener("resize", resize);
+    if (closeOnScroll) window.addEventListener("scroll", close, true);
     return () => {
-      window.removeEventListener("resize", close);
+      window.removeEventListener("resize", resize);
       window.removeEventListener("scroll", close, true);
     };
-  }, [open]);
+  }, [open, closeOnScroll, closeOnResize]);
   function place(trigger: HTMLElement, height: number, matchWidth = false) {
     const r = trigger.getBoundingClientRect(),
       w = Math.min(
@@ -37,7 +52,9 @@ export function useFloatingPanel(width: number) {
           : r.bottom + 6,
     });
   }
-  const onToggle = (event: ToggleEvent<HTMLDivElement>) =>
-    setOpen(event.newState === "open");
+  const onToggle = (event: ToggleEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget)
+      setOpen(event.newState === "open");
+  };
   return { popup, open, position, place, onToggle };
 }

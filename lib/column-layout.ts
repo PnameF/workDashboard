@@ -1,15 +1,20 @@
 import type { BoardLayout } from "./board";
+import { isCalendarContextField } from "./calendar-display";
 
 export function referencedColumns(layout: BoardLayout): string[] {
   return [
     ...new Set([
       ...layout.order,
       ...layout.hidden,
-      ...(layout.calendarFields || []),
+      ...(layout.calendarFields || []).filter(
+        (id) => !isCalendarContextField(id),
+      ),
       ...Object.keys(layout.overrides),
       ...Object.keys(layout.widths || {}),
       ...Object.keys(layout.numberSummaries || {}),
       ...Object.keys(layout.optionColors || {}),
+      ...Object.keys(layout.statusLabels || {}),
+      ...Object.keys(layout.statusOptions || {}),
     ]),
   ];
 }
@@ -39,6 +44,12 @@ export function removeColumnReferences(
       : {}),
     ...(layout.optionColors !== undefined
       ? { optionColors: record(layout.optionColors) }
+      : {}),
+    ...(layout.statusLabels !== undefined
+      ? { statusLabels: record(layout.statusLabels) }
+      : {}),
+    ...(layout.statusOptions !== undefined
+      ? { statusOptions: record(layout.statusOptions) }
       : {}),
   };
   if (layout.calendarFields !== undefined) {

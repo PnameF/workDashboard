@@ -1,4 +1,4 @@
-import { checkAccess, getSessionUser, rateLimit } from "@/lib/auth";
+import { getAuthorizedUser, rateLimit } from "@/lib/auth";
 import { getDb, getBucket, getPublicFileUrl } from "@/lib/db";
 import {
   MAX_UPDATE_IMAGES,
@@ -16,13 +16,8 @@ type Row = Omit<TaskUpdate, "canEdit" | "isAdmin"> & {
 };
 export const dynamic = "force-dynamic";
 async function context(request: Request, route: Context) {
-  const error = await checkAccess(request);
-  if (error) return { error };
-  const user = await getSessionUser();
-  if (!user)
-    return {
-      error: Response.json({ error: "กรุณาเข้าสู่ระบบ" }, { status: 401 }),
-    };
+  const user = await getAuthorizedUser(request);
+  if (user instanceof Response) return { error: user };
   const { id } = await route.params;
   if (!id || id.length > 100)
     return { error: Response.json({ error: "ไม่พบงาน" }, { status: 404 }) };

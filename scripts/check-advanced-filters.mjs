@@ -251,6 +251,76 @@ assert.ok(
     .quickOptions(memberField, [memberTask], memberContext, "2026-10-30", 1)
     .some((option) => option.label === "ฉัน (Member B)"),
 );
+const renamedStatusContext = {
+  ...context,
+  layout: {
+    ...context.layout,
+    statusLabels: { status: { เสร็จแล้ว: "สำเร็จ" } },
+  },
+};
+const renamedStatusField = f
+  .filterFields(tasks, renamedStatusContext)
+  .find((field) => field.id === "status");
+assert.deepEqual(renamedStatusField.options[2], {
+  value: "เสร็จแล้ว",
+  label: "สำเร็จ",
+});
+assert.ok(
+  f.matchesRule(
+    tasks[0],
+    rule("status", "eq", "เสร็จแล้ว"),
+    renamedStatusField,
+    renamedStatusContext,
+  ),
+);
+assert.ok(
+  q
+    .quickOptions(renamedStatusField, tasks, renamedStatusContext)
+    .some(
+      (option) => option.value === "เสร็จแล้ว" && option.label === "สำเร็จ",
+    ),
+);
 console.log(
   "PASS: AND/OR groups, zero/false values, numeric/date boundaries, Timeline overlap, file names, multi-select, hidden admin, validation, and column overrides.",
+);
+const extraStatusKey = "status:00000000-0000-4000-8000-000000000001";
+const extraContext = {
+  ...context,
+  layout: {
+    ...context.layout,
+    statusOptions: { status: ["เสร็จแล้ว", extraStatusKey] },
+    statusLabels: { status: { [extraStatusKey]: "รอตรวจ" } },
+  },
+};
+const extraTask = {
+  ...tasks[0],
+  status: 0,
+  custom: { "view:status": extraStatusKey },
+};
+const extraField = f
+  .filterFields([extraTask], extraContext)
+  .find((field) => field.id === "status");
+assert.deepEqual(
+  extraField.options.map((option) => option.label),
+  ["เสร็จแล้ว", "รอตรวจ"],
+);
+assert.ok(
+  f.matchesRule(
+    extraTask,
+    rule("status", "eq", extraStatusKey),
+    extraField,
+    extraContext,
+  ),
+);
+assert.ok(
+  q
+    .quickOptions(extraField, [extraTask], extraContext)
+    .some(
+      (option) =>
+        option.value === extraStatusKey &&
+        option.label === "รอตรวจ" &&
+        [extraTask].filter((task) =>
+          f.matchesRule(task, option, extraField, extraContext),
+        ).length === 1,
+    ),
 );

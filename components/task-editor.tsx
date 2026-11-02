@@ -11,7 +11,7 @@ import {
   FiFile,
 } from "react-icons/fi";
 import type { Task, CustomColumn, Attachment } from "@/lib/types";
-import { statuses } from "@/lib/types";
+import { statusColors, statusLabel, statusOptions } from "@/lib/status-options";
 import type { BoardLayout } from "@/lib/board";
 import {
   editorFields,
@@ -40,6 +40,7 @@ export default function TaskEditor({
   onPreview,
   group,
   onEditOption,
+  onAddStatus,
   parentTask,
   subtasks = [],
   onOpenTask,
@@ -62,6 +63,7 @@ export default function TaskEditor({
     value: string,
     onRename?: (next: string) => void,
   ) => void;
+  onAddStatus?: (columnId: string) => void;
   parentTask?: Task;
   subtasks?: Task[];
   onOpenTask?: (task: Task) => void;
@@ -169,12 +171,23 @@ export default function TaskEditor({
           aria-label={label}
           value={String(value)}
           disabled={busy}
+          colors={statusColors(layout, field.id)}
+          onAddOption={onAddStatus ? () => onAddStatus(field.id) : undefined}
+          onEditOption={
+            onEditOption
+              ? (old) =>
+                  onEditOption(field.id, old, (next) => {
+                    if (editorValue(draft, field, people) === old)
+                      change(field, next);
+                  })
+              : undefined
+          }
           onChange={(value) => change(field, value)}
         >
           <option value="">ยังไม่ระบุ</option>
-          {statuses.map((s) => (
+          {statusOptions(layout, field.id).map((s) => (
             <option key={s} value={s}>
-              {s}
+              {statusLabel(layout, field.id, s)}
             </option>
           ))}
         </AppSelect>

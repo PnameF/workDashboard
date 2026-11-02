@@ -13,28 +13,59 @@ type Props = {
   type: ColumnType;
   values: unknown[];
   config?: NumberSummaryConfig;
+  statusLabels?: Record<string, string>;
+  statusColors?: Record<string, string>;
+  statusOptions?: string[];
   disabled: boolean;
   onChange: (config: NumberSummaryConfig) => void;
 };
 export default function ColumnFooter(props: Props) {
   if (props.type === "status")
-    return <StatusSummary values={props.values} label={props.label} />;
+    return (
+      <StatusSummary
+        values={props.values}
+        label={props.label}
+        labels={props.statusLabels}
+        colors={props.statusColors}
+        options={props.statusOptions}
+      />
+    );
   if (props.type === "number") return <NumberSummary {...props} />;
   return null;
 }
 function StatusSummary({
   values,
   label,
+  labels,
+  colors: customColors,
+  options = statuses,
 }: {
   values: unknown[];
   label: string;
+  labels?: Record<string, string>;
+  colors?: Record<string, string>;
+  options?: string[];
 }) {
-  const counts = statuses.map(
-    (status, i) => values.filter((v) => v === status || v === i).length,
+  const counts = options.map(
+    (status) =>
+      values.filter(
+        (v) =>
+          v === status ||
+          (statuses.includes(status) && v === statuses.indexOf(status)),
+      ).length,
   );
   const empty = values.length - counts.reduce((a, b) => a + b, 0);
-  const names = [...statuses, "ยังไม่กำหนด"];
-  const colors = ["#71829c", "#d79722", "#18ac89", "#e15876", "#343e50"];
+  const names = [
+    ...options.map((value) => labels?.[value] || value),
+    "ยังไม่กำหนด",
+  ];
+  const colors = options
+    .map(
+      (value, i) =>
+        customColors?.[value] ||
+        ["#71829c", "#d79722", "#18ac89", "#e15876"][i % 4],
+    )
+    .concat("#343e50");
   return (
     <div
       className="status-summary"
@@ -57,7 +88,7 @@ function StatusSummary({
         )
       ) : (
         <span
-          style={{ width: "100%", background: colors[4] }}
+          style={{ width: "100%", background: "#343e50" }}
           title="ยังไม่มีงาน"
         />
       )}

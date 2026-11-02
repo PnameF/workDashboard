@@ -15,13 +15,18 @@ for (const file of [
   "lib/timeline-events.ts",
   "lib/member-color.ts",
   "lib/member-columns.ts",
+  "lib/color.ts",
   "lib/auth-types.ts",
   "lib/option-colors.ts",
+  "lib/column-summary.ts",
+  "lib/status-options.ts",
   "lib/update-images.ts",
   "lib/files.ts",
   "lib/task-updates.ts",
   "components/floating-panel.ts",
   "components/app-select.tsx",
+  "components/option-editor.tsx",
+  "components/column-footer.tsx",
   "components/calendar-display-menu.tsx",
   "components/report-calendar.tsx",
   "components/task-details-drawer.tsx",
@@ -33,6 +38,7 @@ for (const file of [
   "components/subtask-table.tsx",
   "components/member-avatar.tsx",
   "components/choice-picker.tsx",
+  "components/color-picker.tsx",
 ]) {
   let source = ts.transpileModule(fs.readFileSync(file, "utf8"), {
     compilerOptions: {
@@ -42,7 +48,10 @@ for (const file of [
     },
   }).outputText;
   source = source
-    .replace('import Image from "next/image"', 'import NextImageModule from "next/image.js"; const Image = NextImageModule.default || NextImageModule')
+    .replace(
+      'import Image from "next/image"',
+      'import NextImageModule from "next/image.js"; const Image = NextImageModule.default || NextImageModule',
+    )
     .replace('from "next/image"', 'from "next/image.js"')
     .replace(
       /from (["'])@\/lib\/([^"']+)\1/g,
@@ -108,6 +117,17 @@ assert.ok(memberMarkup.includes("Member B"));
 assert.ok(
   memberMarkup.includes('src="https://assets.example.test/avatar.png"'),
 );
+const { default: ColorPicker } = await import(
+  pathToFileURL(path.join(root, "components/color-picker.mjs"))
+);
+const colorMarkup = renderToStaticMarkup(
+  React.createElement(ColorPicker, { value: "#0066ff", onChange() {} }),
+);
+assert.ok(colorMarkup.includes('value="0066FF"'));
+assert.ok(colorMarkup.includes("color-hue-slider"));
+assert.ok(colorMarkup.includes("ใช้สีนี้"));
+assert.ok(!colorMarkup.includes("คัดลอกรหัสสี"));
+assert.ok(!colorMarkup.includes("color-code-prefix"));
 assert.deepEqual(t.parseRange(["2026-10-30", "2026-11-03"]), [
   "2026-10-30",
   "2026-11-03",
@@ -283,9 +303,8 @@ for (const [value, count] of [
   assert.ok(html.includes(`>${count}D</span>`));
 }
 assert.ok(!picker.includes('type="date"'));
-const { calendarColumns, calendarFieldValue } = await import(
-    pathToFileURL(path.join(root, "lib/calendar-display.mjs"))
-  ),
+const { calendarColumns, calendarFieldValue, calendarDisplayOptions } =
+    await import(pathToFileURL(path.join(root, "lib/calendar-display.mjs"))),
   { memberColor } = await import(
     pathToFileURL(path.join(root, "lib/member-color.mjs"))
   );
@@ -330,6 +349,105 @@ assert.ok(
     .includes("Project Alpha | Timeline fixture"),
 );
 assert.ok(!configured.includes("หัวข้องาน: Timeline fixture"));
+const parentTask = {
+  ...task,
+  id: "parent-context",
+  name: "ชื่องานหลัก",
+  custom: {},
+};
+const childTask = {
+  ...task,
+  id: "child-context",
+  name: "ชื่องานย่อย",
+  parent_id: parentTask.id,
+  group_id: "design-team",
+};
+const contextLayout = {
+  ...layout,
+  calendarFields: ["meta:group", "meta:parent", "name"],
+  groupNames: { "design-team": "ทีมออกแบบใหม่" },
+};
+const contextGroups = [
+  { id: "design-team", name: "ทีมออกแบบ", color: "#7197d0" },
+];
+assert.ok(
+  calendarDisplayOptions(custom, contextLayout).some(
+    (field) => field.id === "meta:group" && field.name === "ชื่อกลุ่ม",
+  ),
+);
+assert.ok(
+  calendarDisplayOptions(custom, contextLayout).some(
+    (field) => field.id === "meta:parent" && field.name === "ชื่องานแม่",
+  ),
+);
+assert.ok(
+  !calendarColumns(custom, contextLayout).some((field) =>
+    field.id.startsWith("meta:"),
+  ),
+);
+assert.equal(
+  calendarFieldValue(childTask, "meta:group", custom, contextLayout, [], [], {
+    groups: contextGroups,
+  }),
+  "ทีมออกแบบใหม่",
+);
+assert.equal(
+  calendarFieldValue(childTask, "meta:parent", custom, contextLayout, [], [], {
+    tasks: [parentTask, childTask],
+  }),
+  "ชื่องานหลัก",
+);
+assert.equal(
+  calendarFieldValue(parentTask, "meta:parent", custom, contextLayout, [], []),
+  "",
+);
+assert.equal(
+  calendarFieldValue(parentTask, "meta:parent", custom, contextLayout, [], [], {
+    tasks: [parentTask, childTask],
+  }),
+  "ชื่องานหลัก",
+);
+assert.equal(
+  calendarFieldValue(childTask, "meta:parent", custom, contextLayout, [], []),
+  "",
+);
+const contextCalendar = renderToStaticMarkup(
+  React.createElement(ReportCalendar, {
+    tasks: [childTask],
+    allTasks: [parentTask, childTask],
+    columns: custom,
+    layout: contextLayout,
+    groups: contextGroups,
+    people: [],
+  }),
+);
+assert.ok(
+  contextCalendar
+    .replace(/<!--.*?-->/g, "")
+    .includes("ทีมออกแบบใหม่ | ชื่องานหลัก | ชื่องานย่อย"),
+);
+const standalone = {
+  ...task,
+  id: "standalone",
+  name: "งานเดี่ยว",
+  project: "",
+  hours: 0,
+};
+const sparseCalendar = renderToStaticMarkup(
+  React.createElement(ReportCalendar, {
+    tasks: [standalone],
+    allTasks: [standalone],
+    columns: custom,
+    layout: {
+      ...layout,
+      calendarFields: ["meta:parent", "project", "name", "hours"],
+    },
+    people: [],
+  }),
+);
+assert.ok(sparseCalendar.replace(/<!--.*?-->/g, "").includes("งานเดี่ยว | 0"));
+assert.ok(!sparseCalendar.includes(" | —"));
+assert.ok(!sparseCalendar.includes("ชื่องานแม่: ไม่ระบุ"));
 assert.ok(
   configured.indexOf("ปฏิทิน เดือนถัดไป") <
     configured.indexOf("ตั้งค่าข้อมูลหลักและรองบนปฏิทิน"),
@@ -362,6 +480,126 @@ assert.match(drawerHtml, /data-field-id="hours"[\s\S]*?<dd>0<\/dd>/);
 assert.ok(!drawerHtml.includes('data-field-id="name"'));
 assert.ok(drawerHtml.includes("Delivery"));
 assert.ok(!drawerHtml.includes("admin"));
+const { default: AppSelect } = await import(
+  pathToFileURL(path.join(root, "components/app-select.mjs"))
+);
+const { statusColors } = await import(
+  pathToFileURL(path.join(root, "lib/status-options.mjs"))
+);
+const statusLayout = {
+  ...layout,
+  statusLabels: { status: { เสร็จแล้ว: "สำเร็จ" } },
+  optionColors: { status: { เสร็จแล้ว: "#28c987" } },
+};
+const statusPicker = renderToStaticMarkup(
+  React.createElement(
+    AppSelect,
+    {
+      value: "เสร็จแล้ว",
+      colors: statusColors(statusLayout, "status"),
+      onEditOption: () => {},
+    },
+    [
+      React.createElement("option", { key: "empty", value: "" }, "ยังไม่ระบุ"),
+      React.createElement(
+        "option",
+        { key: "done", value: "เสร็จแล้ว" },
+        "สำเร็จ",
+      ),
+    ],
+  ),
+);
+assert.ok(statusPicker.includes('aria-label="แก้ไข สำเร็จ"'));
+assert.ok(!statusPicker.includes('aria-label="แก้ไข ยังไม่ระบุ"'));
+assert.ok(statusPicker.includes('value="เสร็จแล้ว"'));
+assert.ok(statusPicker.includes("--option-color:#28c987"));
+assert.equal(
+  calendarFieldValue(
+    { ...task, status: 2 },
+    "status",
+    custom,
+    statusLayout,
+    [],
+    [],
+  ),
+  "สำเร็จ",
+);
+const statusDrawer = renderToStaticMarkup(
+  React.createElement(Drawer, {
+    task: { ...task, status: 2 },
+    columns: custom,
+    layout: statusLayout,
+    people: ["Member"],
+    attachments: [],
+    onClose: () => {},
+  }),
+);
+assert.match(
+  statusDrawer,
+  /drawer-status status-2[^>]+background:#28c987[^>]*>สำเร็จ/,
+);
+const extraKey = "status:00000000-0000-4000-8000-000000000001";
+const extraLayout = {
+  ...statusLayout,
+  statusOptions: { status: ["เสร็จแล้ว", extraKey] },
+  statusLabels: { status: { เสร็จแล้ว: "สำเร็จ", [extraKey]: "รอตรวจ" } },
+  optionColors: { status: { เสร็จแล้ว: "#28c987", [extraKey]: "#9867ee" } },
+};
+const extraTask = {
+  ...task,
+  status: 0,
+  custom: { ...task.custom, "view:status": extraKey },
+};
+assert.equal(
+  calendarFieldValue(extraTask, "status", custom, extraLayout, [], []),
+  "รอตรวจ",
+);
+const extraPicker = renderToStaticMarkup(
+  React.createElement(
+    AppSelect,
+    {
+      value: extraKey,
+      colors: statusColors(extraLayout, "status"),
+      onAddOption: () => {},
+      onEditOption: () => {},
+    },
+    React.createElement("option", { value: extraKey }, "รอตรวจ"),
+  ),
+);
+assert.ok(extraPicker.includes("เพิ่มสถานะ"));
+assert.ok(extraPicker.includes('aria-label="แก้ไข รอตรวจ"'));
+assert.ok(extraPicker.includes("--option-color:#9867ee"));
+const { default: ColumnFooter } = await import(
+  pathToFileURL(path.join(root, "components/column-footer.mjs"))
+);
+const extraFooter = renderToStaticMarkup(
+  React.createElement(ColumnFooter, {
+    label: "สถานะ",
+    type: "status",
+    values: [extraKey, "เสร็จแล้ว", ""],
+    statusOptions: extraLayout.statusOptions.status,
+    statusLabels: extraLayout.statusLabels.status,
+    statusColors: statusColors(extraLayout, "status"),
+    disabled: false,
+    onChange: () => {},
+  }),
+);
+assert.ok(extraFooter.includes("รอตรวจ 1"));
+assert.ok(extraFooter.includes("ยังไม่กำหนด 1"));
+assert.ok(extraFooter.includes("background:#9867ee"));
+const { default: OptionEditor } = await import(
+  pathToFileURL(path.join(root, "components/option-editor.mjs"))
+);
+const deleteEditor = renderToStaticMarkup(
+  React.createElement(OptionEditor, {
+    value: "รอตรวจ",
+    color: "#9867ee",
+    onSave: async () => {},
+    onCancel: () => {},
+    onDelete: async () => {},
+  }),
+);
+assert.ok(deleteEditor.includes("ลบสถานะ"));
 const { taskInCalendarMonth } = await import(
   pathToFileURL(path.join(root, "lib/timeline-events.mjs"))
 );

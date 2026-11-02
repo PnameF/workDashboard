@@ -3,6 +3,11 @@ import { getDb } from "@/lib/db";
 import type { Task, CustomColumn, Attachment, WorkGroup } from "@/lib/types";
 import { baseColumns, defaultLayout, type BoardLayout } from "@/lib/board";
 import { referencedColumns, removeColumnReferences } from "@/lib/column-layout";
+import type { QueryResult } from "@/lib/database";
+type StoredTask = Omit<Task, "custom" | "assignees"> & {
+  custom: string;
+  assignees: string;
+};
 export const dynamic = "force-dynamic";
 export async function GET() {
   const authError = await checkAccess();
@@ -10,40 +15,31 @@ export async function GET() {
 
   try {
     const db = await getDb();
-    const [tasks, columns, attachments, settings, groups, members] =
-      await Promise.all([
-        db
-          .prepare(
-            "SELECT * FROM tasks WHERE archived_at IS NULL ORDER BY COALESCE(sort_order,rowid*1024),rowid",
-          )
-          .all<
-            Omit<Task, "custom" | "assignees"> & {
-              custom: string;
-              assignees: string;
-            }
-          >(),
-        db
-          .prepare("SELECT * FROM custom_columns ORDER BY rowid")
-          .all<Omit<CustomColumn, "options"> & { options: string }>(),
-        db
-          .prepare(
-            "SELECT a.id,a.task_id,a.name,a.content_type,a.size,a.column_id,a.url FROM attachments a JOIN tasks t ON t.id=a.task_id WHERE t.archived_at IS NULL ORDER BY a.created_at",
-          )
-          .all<Attachment>(),
-        db
-          .prepare("SELECT layout FROM board_settings WHERE id=1")
-          .first<{ layout: string }>(),
-        db
-          .prepare(
-            "SELECT * FROM task_groups WHERE id NOT IN ('todo','done') ORDER BY rowid",
-          )
-          .all<WorkGroup>(),
-        db
-          .prepare(
-            "SELECT m.id,m.name,u.avatar_url AS avatarUrl FROM members m JOIN auth_users u ON u.id=m.user_id WHERE u.role<>'admin' ORDER BY m.id",
-          )
-          .all<{ id: number; name: string; avatarUrl: string | null }>(),
-      ]);
+    const [tasks, columns, attachments, settingRows, groups, members] =
+      (await db.batch([
+        db.prepare(
+          "SELECT * FROM tasks WHERE archived_at IS NULL ORDER BY COALESCE(sort_order,rowid*1024),rowid",
+        ),
+        db.prepare("SELECT * FROM custom_columns ORDER BY rowid"),
+        db.prepare(
+          "SELECT a.id,a.task_id,a.name,a.content_type,a.size,a.column_id,a.url FROM attachments a JOIN tasks t ON t.id=a.task_id WHERE t.archived_at IS NULL ORDER BY a.created_at",
+        ),
+        db.prepare("SELECT layout FROM board_settings WHERE id=1"),
+        db.prepare(
+          "SELECT * FROM task_groups WHERE id NOT IN ('todo','done') ORDER BY rowid",
+        ),
+        db.prepare(
+          "SELECT m.id,m.name,u.avatar_url AS avatarUrl FROM members m JOIN auth_users u ON u.id=m.user_id WHERE u.role<>'admin' ORDER BY m.id",
+        ),
+      ])) as [
+        QueryResult<StoredTask>,
+        QueryResult<Omit<CustomColumn, "options"> & { options: string }>,
+        QueryResult<Attachment>,
+        QueryResult<{ layout: string }>,
+        QueryResult<WorkGroup>,
+        QueryResult<{ id: number; name: string; avatarUrl: string | null }>,
+      ];
+    const settings = settingRows.results[0];
     const savedLayout: BoardLayout = settings
       ? JSON.parse(settings.layout)
       : defaultLayout;

@@ -3,31 +3,26 @@ import { checkAccess } from "@/lib/auth";
 import { baseColumns, columnTypes, type BoardLayout } from "@/lib/board";
 import { calculations } from "@/lib/column-summary";
 import { validOptionColors } from "@/lib/option-colors";
+import { validStatusLabels, validStatusOptions } from "@/lib/status-options";
 import { referencedColumns, removeColumnReferences } from "@/lib/column-layout";
 import { convertMemberColumn } from "@/lib/member-columns";
+import { calendarContextFields } from "@/lib/calendar-display";
+import { loadTaskSchema } from "@/lib/task-schema";
 export async function PUT(request: Request) {
   const authError = await checkAccess(request);
   if (authError) return authError;
   try {
     let body = (await request.json()) as BoardLayout;
     const db = await getDb(),
-      saved = await db
-        .prepare("SELECT layout FROM board_settings WHERE id=1")
-        .first<{ layout: string }>(),
-      deleted: string[] = saved
-        ? JSON.parse(saved.layout).deletedColumns || []
-        : [];
+      schema = await loadTaskSchema(db),
+      savedLayout = schema.layout,
+      deleted: string[] = savedLayout.deletedColumns || [];
     body.deletedColumns = deleted;
-    const custom = await db
-      .prepare("SELECT id,type FROM custom_columns")
-      .all<{ id: string; type: string }>();
+    const custom = { results: schema.columns };
     const ids = new Set([
       ...baseColumns.filter((c) => !deleted.includes(c.id)).map((c) => c.id),
       ...custom.results.map((c) => c.id),
     ]);
-    const savedLayout: BoardLayout | null = saved
-      ? JSON.parse(saved.layout)
-      : null;
     const stale = new Set([
       ...deleted,
       ...(savedLayout
@@ -35,22 +30,21 @@ export async function PUT(request: Request) {
         : []),
     ]);
     body = removeColumnReferences(body, stale);
-    const customGroups = await db
-      .prepare("SELECT id FROM task_groups")
-      .all<{ id: string }>();
-    const groupIds = new Set([
-      "todo",
-      "done",
-      ...customGroups.results.map((g) => g.id),
-    ]);
+    const groupIds = new Set(["todo", "done", ...schema.groups]);
     const validIds = (list: unknown): list is string[] =>
       Array.isArray(list) &&
       list.length <= ids.size &&
       new Set(list).size === list.length &&
       list.every((id) => typeof id === "string" && ids.has(id));
+    const calendarIds = new Set([
+      ...ids,
+      ...calendarContextFields.map((field) => field.id),
+    ]);
     if (
       !validIds(body.order) ||
       !validOptionColors(body.optionColors, ids) ||
+      !validStatusOptions(body.statusOptions, ids) ||
+      !validStatusLabels(body.statusLabels, ids, body.statusOptions) ||
       (body.projectOptions !== undefined &&
         (!Array.isArray(body.projectOptions) ||
           body.projectOptions.length > 100 ||
@@ -68,7 +62,13 @@ export async function PUT(request: Request) {
           body.archivedGroups.some((id) => !groupIds.has(id)))) ||
       !validIds(body.hidden) ||
       (body.calendarFields !== undefined &&
-        (!validIds(body.calendarFields) || body.calendarFields.length === 0)) ||
+        (!Array.isArray(body.calendarFields) ||
+          !body.calendarFields.length ||
+          body.calendarFields.length > calendarIds.size ||
+          new Set(body.calendarFields).size !== body.calendarFields.length ||
+          body.calendarFields.some(
+            (id) => typeof id !== "string" || !calendarIds.has(id),
+          ))) ||
       (body.numberSummaries !== undefined &&
         (!body.numberSummaries ||
           typeof body.numberSummaries !== "object" ||

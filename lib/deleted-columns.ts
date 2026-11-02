@@ -32,6 +32,8 @@ export function withoutColumn(layout: BoardLayout, id: string): BoardLayout {
     widths: omit(layout.widths),
     numberSummaries: omit(layout.numberSummaries),
     optionColors: omit(layout.optionColors),
+    statusLabels: omit(layout.statusLabels),
+    statusOptions: omit(layout.statusOptions),
   };
   if (layout.calendarFields) {
     result.calendarFields = layout.calendarFields.filter((key) => key !== id);

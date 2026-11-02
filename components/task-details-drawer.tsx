@@ -27,6 +27,7 @@ import { optionColor } from "@/lib/option-colors";
 import { taskGroupInfo } from "@/lib/board";
 import type { WorkGroup } from "@/lib/types";
 import { statuses } from "@/lib/types";
+import { statusColor } from "@/lib/status-options";
 import MemberAvatar from "./member-avatar";
 import { memberIds } from "@/lib/member-columns";
 import { parseRange, rangeDuration } from "@/lib/timeline";
@@ -101,11 +102,8 @@ export default function TaskDetailsDrawer({
     const element = dialog.current;
     if (!element) return;
     element.showModal();
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       element.close();
-      document.body.style.overflow = overflow;
     };
   }, []);
   function closeDrawer() {
@@ -258,7 +256,16 @@ export default function TaskDetailsDrawer({
                         </div>
                       ) : type === "status" && value ? (
                         <span
-                          className={`label-chip drawer-status status-${statuses.indexOf(value)}`}
+                          className={`label-chip drawer-status status-${statuses.indexOf(typeof raw === "string" ? raw : statuses[task.status])}`}
+                          style={{
+                            background: statusColor(
+                              layout,
+                              field.id,
+                              typeof raw === "string"
+                                ? raw
+                                : statuses[task.status],
+                            ),
+                          }}
                         >
                           {value}
                         </span>

@@ -5,6 +5,7 @@ import {
   type CustomColumn,
   type Task,
 } from "./types";
+import { statusCode, statusValue } from "./status-options";
 export type EditorField = {
   id: string;
   name: string;
@@ -67,7 +68,9 @@ export function editorValue(
         ? task.assignees.map(String)
         : task.assignees.map((id) => people[id]).filter(Boolean);
     case "status":
-      return statuses[task.status] || "";
+      return field.type === "status"
+        ? statusValue(task)
+        : statuses[task.status] || "";
     case "date":
       return task.date;
     case "priority":
@@ -93,7 +96,11 @@ export function setEditorValue(
       return { ...task, assignees, person: assignees[0] ?? -1 };
     }
     case "status":
-      return { ...task, status: statuses.indexOf(String(value)) };
+      return {
+        ...task,
+        status: statusCode(String(value)),
+        custom: { ...task.custom, "view:status": String(value) },
+      };
     case "hours":
       return { ...task, hours: value === "" ? null : Number(value) };
     case "name":

@@ -64,7 +64,9 @@ export async function createSession(userId: string) {
     .run();
   await setSessionCookie(token);
 }
-export async function checkAccess(request?: Request) {
+export async function getAuthorizedUser(
+  request?: Request,
+): Promise<AuthUser | Response> {
   if (
     request &&
     !["GET", "HEAD", "OPTIONS"].includes(request.method) &&
@@ -76,7 +78,11 @@ export async function checkAccess(request?: Request) {
     return Response.json({ error: "กรุณาเข้าสู่ระบบ" }, { status: 401 });
   const token = (await cookies()).get(SESSION_COOKIE)!.value;
   await setSessionCookie(token);
-  return null;
+  return user;
+}
+export async function checkAccess(request?: Request) {
+  const result = await getAuthorizedUser(request);
+  return result instanceof Response ? result : null;
 }
 export async function rateLimit(
   action: string,

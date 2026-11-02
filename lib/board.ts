@@ -26,6 +26,8 @@ export const baseColumns = [
 export type BoardLayout = {
   deletedColumns?: string[];
   optionColors?: Record<string, Record<string, string>>;
+  statusLabels?: Record<string, Record<string, string>>;
+  statusOptions?: Record<string, string[]>;
   projectOptions?: string[];
   hiddenGroups?: string[];
   archivedGroups?: string[];

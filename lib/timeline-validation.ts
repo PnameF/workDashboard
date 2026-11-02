@@ -1,18 +1,22 @@
 import type { Database } from "./database";
 import { parseRange } from "./timeline";
+import type { TaskSchema } from "./task-schema";
 export async function validTimelines(
   db: Database,
   custom: Record<string, unknown>,
+  schema?: TaskSchema,
 ) {
   if (!Object.keys(custom).length) return true;
-  const [columns, settings] = await Promise.all([
-    db
-      .prepare("SELECT id,type FROM custom_columns")
-      .all<{ id: string; type: string }>(),
-    db
-      .prepare("SELECT layout FROM board_settings WHERE id=1")
-      .first<{ layout: string }>(),
-  ]);
+  const [columns, settings] = schema
+    ? [{ results: schema.columns }, { layout: JSON.stringify(schema.layout) }]
+    : await Promise.all([
+        db
+          .prepare("SELECT id,type FROM custom_columns")
+          .all<{ id: string; type: string }>(),
+        db
+          .prepare("SELECT layout FROM board_settings WHERE id=1")
+          .first<{ layout: string }>(),
+      ]);
   const overrides: Record<string, { type: string }> = settings
     ? JSON.parse(settings.layout).overrides || {}
     : {};
